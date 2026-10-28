@@ -34,7 +34,42 @@ services:
       - data_net
     restart: unless-stopped
 
+  # Background worker (V2.2 / V3.2). Same image as php, no ports.
+  # It runs app/worker.php --loop: ingestion jobs + expert jobs,
+  # claimed with FOR UPDATE SKIP LOCKED. It is NOT spawned per
+  # request. If you stop it, uploads stay "pending" until it restarts
+  # — nothing is lost, and stale 'processing' jobs are reclaimed
+  # after 10 minutes (see worker.php).
+  worker:
+    build:
+      context: .
+      dockerfile: docker/php.Dockerfile
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-nexgen}
+      DB_USER: ${POSTGRES_USER:-nexgen}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      LEMONADE_BASE_URL: ${LEMONADE_BASE_URL:-http://172.25.160.1:13305/v1}
+      LEMONADE_MODEL: ${LEMONADE_MODEL:-Qwen3.5-2B-GGUF}
+    volumes:
+      - ./app:/var/www/html
+    command: ["php", "/var/www/html/worker.php", "--loop"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app_net
+      - data_net
+    restart: unless-stopped
+
   postgres:
+    # NOTE: plain postgres:17-alpine does NOT include pgvector.
+    # Retrieval works on full-text search without it (see migrate.php).
+    # To enable vectors later, change this image to
+    # pgvector/pgvector:pg17 and re-run migrate.php.
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-nexgen}

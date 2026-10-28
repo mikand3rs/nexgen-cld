@@ -377,6 +377,12 @@ if ($path !== '/') {
         <p>
             A focused workspace for clear answers and practical next steps.
         </p>
+
+        <p>
+            <a href="/upload.php">Upload documents</a> ·
+            <a href="/documents.php">Documents</a> ·
+            <a href="/ask.php">Ask the experts</a>
+        </p>
     </header>
 
     <section

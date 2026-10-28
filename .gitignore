@@ -19,3 +19,9 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
+
+# v2/v3: uploaded documents are private data, never committed.
+# The folder itself is created by the code; its contents must not
+# be in the repo, even if a document looks harmless.
+app/storage/
+!app/storage/uploads/.gitkeep
