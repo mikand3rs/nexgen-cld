@@ -1,17 +1,16 @@
 <?php
 // BMOS 3.2 — Files UI. Upload via presigned URL (Alpine + fetch), list via HTMX.
 ?>
-<div class="bg-white rounded-xl border border-gray-200 p-5 mb-4"
+<div class="bg-[#141419] rounded-2xl border border-zinc-800/70 p-5 mb-4"
      x-data="{ uploading: false, progress: '' }">
   <h2 class="font-semibold mb-3">Upload file</h2>
   <form @submit.prevent="
-      const tenant = document.getElementById('tenant-input').value;
       const file = $refs.file.files[0];
       if (!file) return;
       uploading = true; progress = 'Registering…';
       fetch('/objects', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': tenant },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: file.name, media_type: file.type || 'application/octet-stream' })
       }).then(r => r.json()).then(d => {
         if (!d.upload_url) throw new Error(d.error || 'register failed');
@@ -20,7 +19,7 @@
       }).then(id => {
         progress = 'Finalizing…';
         return fetch('/objects/' + id + '/complete', {
-          method: 'POST', headers: { 'X-Tenant-ID': tenant }
+          method: 'POST', 
         }).then(r => r.json());
       }).then(d => {
         progress = 'Done: ' + (d.lifecycle_state || 'uploaded');
@@ -35,12 +34,12 @@
       Upload
     </button>
   </form>
-  <div x-show="progress" x-text="progress" class="text-sm text-gray-600 mt-2"></div>
+  <div x-show="progress" x-text="progress" class="text-sm text-zinc-400 mt-2"></div>
 </div>
 
-<div class="bg-white rounded-xl border border-gray-200 p-5">
+<div class="bg-[#141419] rounded-2xl border border-zinc-800/70 p-5">
   <h2 class="font-semibold mb-3">Files</h2>
   <div id="file-list" hx-get="/objects-ui/list" hx-trigger="load, refresh" hx-swap="innerHTML">
-    <div class="text-sm text-gray-500">Loading…</div>
+    <div class="text-sm text-zinc-500">Loading…</div>
   </div>
 </div>

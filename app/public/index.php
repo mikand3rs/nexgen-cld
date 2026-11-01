@@ -16,6 +16,7 @@
 header('Content-Type: application/json');
 
 require_once __DIR__ . '/../src/Db.php';
+require_once __DIR__ . '/../src/Auth.php';
 require_once __DIR__ . '/../src/Qdrant.php';
 require_once __DIR__ . '/../src/Embeddings.php';
 require_once __DIR__ . '/../src/S3Client.php';
@@ -25,13 +26,68 @@ $version = '3.2-dev';
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
-if ($path === '/jobs/enqueue' && $method === 'POST') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $tenantId)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'X-Tenant-ID header must be a UUID (demo auth stand-in, not real auth)']);
+// Stage A: Authentication routes (no auth required).
+if ($path === '/login' && $method === 'GET') {
+    header('Content-Type: text/html; charset=utf-8');
+    // Already logged in? Go to dashboard.
+    if (Auth::userId()) { header('Location: /dashboard'); exit; }
+    require __DIR__ . '/../views/login.php';
+    return;
+}
+if ($path === '/auth/login' && $method === 'POST') {
+    $body = json_decode((string) file_get_contents('php://input'), true);
+    if (!is_array($body)) $body = $_POST;
+    $email = trim((string) ($body['email'] ?? ''));
+    $password = (string) ($body['password'] ?? '');
+    $user = Auth::login($email, $password);
+    if (!$user) {
+        http_response_code(401);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'invalid credentials']);
         return;
     }
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => true, 'user' => $user, 'tenants' => Auth::memberships($user['id'])]);
+    return;
+}
+if ($path === '/auth/logout' && $method === 'POST') {
+    Auth::logout();
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => true]);
+    return;
+}
+if ($path === '/auth/me' && $method === 'GET') {
+    $uid = Auth::userId();
+    if (!$uid) {
+        http_response_code(401);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'not authenticated']);
+        return;
+    }
+    header('Content-Type: application/json');
+    echo json_encode([
+        'user' => ['id' => $uid, 'email' => Auth::userEmail()],
+        'tenants' => Auth::memberships($uid),
+        'active_tenant' => Auth::currentTenantId(),
+    ]);
+    return;
+}
+if ($path === '/auth/switch-tenant' && $method === 'POST') {
+    $body = json_decode((string) file_get_contents('php://input'), true) ?? [];
+    $tid = (string) ($body['tenant_id'] ?? '');
+    if (!Auth::selectTenant($tid)) {
+        http_response_code(403);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'not a member of that tenant']);
+        return;
+    }
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => true, 'active_tenant' => $tid]);
+    return;
+}
+
+if ($path === '/jobs/enqueue' && $method === 'POST') {
+    $tenantId = Auth::requireTenant();
     $body = json_decode((string) file_get_contents('php://input'), true);
     if (!is_array($body)) {
         $body = [];
@@ -131,12 +187,7 @@ if ($path === '/documents' && $method === 'POST') {
     // Indexing into Qdrant happens via scripts/index-documents.php or the
     // document.index outbox job — Qdrant is the derived index, never the
     // write path for business records.
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $tenantId)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'X-Tenant-ID header must be a UUID (demo auth stand-in, not real auth)']);
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     $body = json_decode((string) file_get_contents('php://input'), true);
     if (!is_array($body)) {
         $body = [];
@@ -203,12 +254,7 @@ if ($path === '/search' && $method === 'POST') {
     // Tenant-filtered vector search. The tenant filter is SERVER-GENERATED
     // from the X-Tenant-ID header. A tenant_id in the request body is
     // IGNORED (forged client tenant IDs must not change the filter).
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $tenantId)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'X-Tenant-ID header must be a UUID (demo auth stand-in, not real auth)']);
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     $body = json_decode((string) file_get_contents('php://input'), true);
     if (!is_array($body)) {
         $body = [];
@@ -254,12 +300,7 @@ if ($path === '/search' && $method === 'POST') {
 // PHP never proxies bytes; MinIO creds are the non-root app identity.
 
 if ($path === '/objects' && $method === 'POST') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $tenantId)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'X-Tenant-ID header must be a UUID (demo auth stand-in, not real auth)']);
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     $body = json_decode((string) file_get_contents('php://input'), true);
     if (!is_array($body)) {
         $body = [];
@@ -317,13 +358,7 @@ if ($path === '/objects' && $method === 'POST') {
 }
 
 if (preg_match('#^/objects/([0-9a-f-]{36})/complete$#i', $path, $m) && $method === 'POST') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    $objectId = $m[1];
-    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $tenantId)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'X-Tenant-ID header must be a UUID']);
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     try {
         $pdo = Db::connect();
         $pdo->beginTransaction();
@@ -368,13 +403,7 @@ if (preg_match('#^/objects/([0-9a-f-]{36})/complete$#i', $path, $m) && $method =
 }
 
 if (preg_match('#^/objects/([0-9a-f-]{36})/download$#i', $path, $m) && $method === 'GET') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    $objectId = $m[1];
-    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $tenantId)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'X-Tenant-ID header must be a UUID']);
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     try {
         $pdo = Db::connect();
         $pdo->exec("SET app.current_tenant = '{$tenantId}'");
@@ -407,12 +436,7 @@ if (preg_match('#^/objects/([0-9a-f-]{36})/download$#i', $path, $m) && $method =
 }
 
 if ($path === '/objects' && $method === 'GET') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $tenantId)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'X-Tenant-ID header must be a UUID']);
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     try {
         $pdo = Db::connect();
         $pdo->exec("SET app.current_tenant = '{$tenantId}'");
@@ -429,13 +453,7 @@ if ($path === '/objects' && $method === 'GET') {
 }
 
 if (preg_match('#^/objects/([0-9a-f-]{36})$#i', $path, $m) && $method === 'DELETE') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    $objectId = $m[1];
-    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $tenantId)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'X-Tenant-ID header must be a UUID']);
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     try {
         $pdo = Db::connect();
         $pdo->beginTransaction();
@@ -524,12 +542,7 @@ if ($path === '/ai/health' && $method === 'GET') {
 // Tenant header is validated (demo auth stand-in); the tenant id is NOT
 // sent to Lemonade — it only scopes which PHP caller may use the endpoint.
 if ($path === '/ai/chat' && $method === 'POST') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $tenantId)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'X-Tenant-ID header must be a UUID (demo auth stand-in, not real auth)']);
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     $body = json_decode((string) file_get_contents('php://input'), true);
     $messages = is_array($body['messages'] ?? null) ? $body['messages'] : [];
     // Minimal shape validation: non-empty, each has role+content strings.
@@ -576,6 +589,7 @@ if ($path === '/' && $method === 'GET') {
 
 // GET /dashboard → full page shell.
 if ($path === '/dashboard' && $method === 'GET') {
+    Auth::requireLogin();
     header('Content-Type: text/html; charset=utf-8');
     $title = 'Dashboard';
     $active = 'dashboard';
@@ -588,32 +602,27 @@ if ($path === '/dashboard' && $method === 'GET') {
 
 // GET /dashboard/stats → HTMX partial: stat cards.
 if ($path === '/dashboard/stats' && $method === 'GET') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    $stats = ['tenants' => 0, 'tasks' => 0, 'documents' => 0, 'objects' => 0];
-    if (preg_match('/^[0-9a-f-]{36}$/i', $tenantId)) {
-        try {
-            $pdo = Db::connect();
-            $pdo->beginTransaction();
-            $pdo->exec("SET LOCAL app.current_tenant = '{$tenantId}'");
-            $stats['tenants'] = (int) $pdo->query('SELECT COUNT(*) FROM app.tenants')->fetchColumn();
-            $stats['tasks'] = (int) $pdo->query("SELECT COUNT(*) FROM app.tasks")->fetchColumn();
-            $stats['documents'] = (int) $pdo->query('SELECT COUNT(*) FROM app.documents')->fetchColumn();
-            $stats['objects'] = (int) $pdo->query("SELECT COUNT(*) FROM app.objects WHERE lifecycle_state <> 'deleted'")->fetchColumn();
-            $pdo->commit();
-        } catch (Throwable $e) {
-            if (isset($pdo) && $pdo->inTransaction()) { $pdo->rollBack(); }
-        }
-    }
-    $cards = [
-        ['Tenants', $stats['tenants'], 'bg-blue-50 text-blue-700'],
-        ['Open tasks', $stats['tasks'], 'bg-amber-50 text-amber-700'],
-        ['Documents', $stats['documents'], 'bg-emerald-50 text-emerald-700'],
-        ['Files', $stats['objects'], 'bg-violet-50 text-violet-700'],
+    $tenantId = Auth::requireTenant();
+    $pdo = Db::connect();
+    $pdo->beginTransaction();
+    $pdo->exec("SET LOCAL app.current_tenant = '{$tenantId}'");
+    $stats = [
+        'tenants' => (int) $pdo->query("SELECT COUNT(*) FROM app.tenants")->fetchColumn(),
+        'tasks' => (int) $pdo->query("SELECT COUNT(*) FROM app.tasks WHERE status = 'open'")->fetchColumn(),
+        'documents' => (int) $pdo->query("SELECT COUNT(*) FROM app.documents")->fetchColumn(),
+        'objects' => (int) $pdo->query("SELECT COUNT(*) FROM app.objects WHERE lifecycle_state = 'uploaded'")->fetchColumn(),
     ];
-    foreach ($cards as [$label, $value, $cls]) {
-        echo '<div class="bg-white rounded-xl border border-gray-200 p-5">';
-        echo '<div class="text-sm text-gray-500 mb-1">' . htmlspecialchars($label) . '</div>';
-        echo '<div class="text-3xl font-bold ' . $cls . ' rounded-lg px-3 py-1 inline-block">' . $value . '</div>';
+    $pdo->commit();
+    $cards = [
+        ['Tenants', $stats['tenants']],
+        ['Open tasks', $stats['tasks']],
+        ['Documents', $stats['documents']],
+        ['Files', $stats['objects']],
+    ];
+    foreach ($cards as [$label, $value]) {
+        echo '<div class="bg-[#141419] rounded-2xl border border-zinc-800/70 p-6 text-center">';
+        echo '<div class="text-[13px] text-zinc-500 mb-2">' . htmlspecialchars($label) . '</div>';
+        echo '<div class="text-[56px] leading-none font-semibold text-zinc-100 tabular-nums">' . $value . '</div>';
         echo '</div>';
     }
     return;
@@ -621,11 +630,7 @@ if ($path === '/dashboard/stats' && $method === 'GET') {
 
 // GET /dashboard/recent-tasks → HTMX partial.
 if ($path === '/dashboard/recent-tasks' && $method === 'GET') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f-]{36}$/i', $tenantId)) {
-        echo '<div class="text-sm text-gray-500">Set a tenant UUID above.</div>';
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     try {
         $pdo = Db::connect();
         $pdo->beginTransaction();
@@ -635,14 +640,14 @@ if ($path === '/dashboard/recent-tasks' && $method === 'GET') {
         )->fetchAll(PDO::FETCH_ASSOC);
         $pdo->commit();
         if (!$rows) {
-            echo '<div class="text-sm text-gray-500">No tasks yet.</div>';
+            echo '<div class="text-sm text-zinc-500">No tasks yet.</div>';
             return;
         }
         echo '<ul class="space-y-2">';
         foreach ($rows as $r) {
             $badge = $r['status'] === 'done'
-                ? 'bg-emerald-100 text-emerald-800'
-                : 'bg-amber-100 text-amber-800';
+                ? 'bg-emerald-900/40 text-emerald-300'
+                : 'bg-amber-900/40 text-amber-300';
             echo '<li class="flex items-center gap-2 text-sm">';
             echo '<span class="px-2 py-0.5 rounded text-xs ' . $badge . '">' . htmlspecialchars($r['status']) . '</span>';
             echo '<span class="truncate">' . htmlspecialchars($r['title']) . '</span>';
@@ -651,7 +656,7 @@ if ($path === '/dashboard/recent-tasks' && $method === 'GET') {
         echo '</ul>';
     } catch (Throwable $e) {
         if (isset($pdo) && $pdo->inTransaction()) { $pdo->rollBack(); }
-        echo '<div class="text-sm text-red-600">Could not load tasks.</div>';
+        echo '<div class="text-sm text-red-400">Could not load tasks.</div>';
     }
     return;
 }
@@ -688,7 +693,7 @@ if ($path === '/dashboard/system' && $method === 'GET') {
         $dot = $ok ? 'bg-emerald-500' : 'bg-red-500';
         echo '<li class="flex items-center gap-2">';
         echo '<span class="w-2.5 h-2.5 rounded-full ' . $dot . '"></span>';
-        echo htmlspecialchars($name) . ' <span class="text-gray-500">· ' . ($ok ? 'ok' : 'down') . '</span>';
+        echo htmlspecialchars($name) . ' <span class="text-zinc-500">· ' . ($ok ? 'ok' : 'down') . '</span>';
         echo '</li>';
     }
     echo '</ul>';
@@ -698,6 +703,7 @@ if ($path === '/dashboard/system' && $method === 'GET') {
 // Phase 12b: Tasks UI.
 // GET /tasks → full page.
 if ($path === '/tasks' && $method === 'GET') {
+    Auth::requireLogin();
     header('Content-Type: text/html; charset=utf-8');
     $title = 'Tasks';
     $active = 'tasks';
@@ -710,11 +716,7 @@ if ($path === '/tasks' && $method === 'GET') {
 
 // GET /tasks/list → HTMX partial (tenant-scoped).
 if ($path === '/tasks/list' && $method === 'GET') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f-]{36}$/i', $tenantId)) {
-        echo '<div class="text-sm text-gray-500">Set a tenant UUID above.</div>';
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     try {
         $pdo = Db::connect();
         $pdo->beginTransaction();
@@ -724,25 +726,25 @@ if ($path === '/tasks/list' && $method === 'GET') {
         )->fetchAll(PDO::FETCH_ASSOC);
         $pdo->commit();
         if (!$rows) {
-            echo '<div class="text-sm text-gray-500">No tasks yet. Add one above.</div>';
+            echo '<div class="text-sm text-zinc-500">No tasks yet. Add one above.</div>';
             return;
         }
         echo '<ul class="space-y-2" id="task-items">';
         foreach ($rows as $r) {
             $done = $r['status'] === 'done';
-            $badge = $done ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800';
-            echo '<li class="flex items-center gap-3 text-sm border-b border-gray-100 pb-2" data-status="' . $r['status'] . '">';
+            $badge = $done ? 'bg-emerald-900/40 text-emerald-300' : 'bg-amber-900/40 text-amber-300';
+            echo '<li class="flex items-center gap-3 text-sm border-b border-zinc-800/50 pb-2" data-status="' . $r['status'] . '">';
             echo '<button hx-post="/tasks/' . htmlspecialchars($r['id']) . '/toggle" hx-target="#task-list" hx-swap="innerHTML"'
-                . ' class="w-5 h-5 rounded border ' . ($done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300') . ' flex items-center justify-center text-xs">'
+                . ' class="w-5 h-5 rounded border ' . ($done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-zinc-700') . ' flex items-center justify-center text-xs">'
                 . ($done ? '✓' : '') . '</button>';
-            echo '<span class="' . ($done ? 'line-through text-gray-400' : '') . ' flex-1">' . htmlspecialchars($r['title']) . '</span>';
+            echo '<span class="' . ($done ? 'line-through text-zinc-500' : '') . ' flex-1">' . htmlspecialchars($r['title']) . '</span>';
             echo '<span class="px-2 py-0.5 rounded text-xs ' . $badge . '">' . htmlspecialchars($r['status']) . '</span>';
             echo '</li>';
         }
         echo '</ul>';
     } catch (Throwable $e) {
         if (isset($pdo) && $pdo->inTransaction()) { $pdo->rollBack(); }
-        echo '<div class="text-sm text-red-600">Could not load tasks.</div>';
+        echo '<div class="text-sm text-red-400">Could not load tasks.</div>';
     }
     return;
 }
@@ -750,13 +752,7 @@ if ($path === '/tasks/list' && $method === 'GET') {
 // POST /tasks/create → create task, return refreshed list partial.
 if ($path === '/tasks/create' && $method === 'POST') {
     header('Content-Type: text/html; charset=utf-8');
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    $title = trim($_POST['title'] ?? '');
-    if (!preg_match('/^[0-9a-f-]{36}$/i', $tenantId) || $title === '') {
-        http_response_code(400);
-        echo '<div class="text-sm text-red-600">Title and tenant required.</div>';
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     try {
         $pdo = Db::connect();
         $pdo->beginTransaction();
@@ -767,7 +763,7 @@ if ($path === '/tasks/create' && $method === 'POST') {
     } catch (Throwable $e) {
         if (isset($pdo) && $pdo->inTransaction()) { $pdo->rollBack(); }
         http_response_code(500);
-        echo '<div class="text-sm text-red-600">Could not create task.</div>';
+        echo '<div class="text-sm text-red-400">Could not create task.</div>';
         return;
     }
     // Return the refreshed list by re-dispatching internally.
@@ -784,19 +780,19 @@ if ($path === '/tasks/create' && $method === 'POST') {
         echo '<ul class="space-y-2" id="task-items">';
         foreach ($rows as $r) {
             $done = $r['status'] === 'done';
-            $badge = $done ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800';
-            echo '<li class="flex items-center gap-3 text-sm border-b border-gray-100 pb-2">';
+            $badge = $done ? 'bg-emerald-900/40 text-emerald-300' : 'bg-amber-900/40 text-amber-300';
+            echo '<li class="flex items-center gap-3 text-sm border-b border-zinc-800/50 pb-2">';
             echo '<button hx-post="/tasks/' . htmlspecialchars($r['id']) . '/toggle" hx-target="#task-list" hx-swap="innerHTML"'
-                . ' class="w-5 h-5 rounded border ' . ($done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300') . ' flex items-center justify-center text-xs">'
+                . ' class="w-5 h-5 rounded border ' . ($done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-zinc-700') . ' flex items-center justify-center text-xs">'
                 . ($done ? '✓' : '') . '</button>';
-            echo '<span class="' . ($done ? 'line-through text-gray-400' : '') . ' flex-1">' . htmlspecialchars($r['title']) . '</span>';
+            echo '<span class="' . ($done ? 'line-through text-zinc-500' : '') . ' flex-1">' . htmlspecialchars($r['title']) . '</span>';
             echo '<span class="px-2 py-0.5 rounded text-xs ' . $badge . '">' . htmlspecialchars($r['status']) . '</span>';
             echo '</li>';
         }
         echo '</ul>';
     } catch (Throwable $e) {
         if (isset($pdo) && $pdo->inTransaction()) { $pdo->rollBack(); }
-        echo '<div class="text-sm text-red-600">Could not load tasks.</div>';
+        echo '<div class="text-sm text-red-400">Could not load tasks.</div>';
     }
     return;
 }
@@ -804,13 +800,7 @@ if ($path === '/tasks/create' && $method === 'POST') {
 // POST /tasks/{id}/toggle → flip open/done, return refreshed list.
 if (preg_match('#^/tasks/([0-9a-f-]{36})/toggle$#i', $path, $m) && $method === 'POST') {
     header('Content-Type: text/html; charset=utf-8');
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    $taskId = $m[1];
-    if (!preg_match('/^[0-9a-f-]{36}$/i', $tenantId)) {
-        http_response_code(400);
-        echo '<div class="text-sm text-red-600">Tenant required.</div>';
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     try {
         $pdo = Db::connect();
         $pdo->beginTransaction();
@@ -821,7 +811,7 @@ if (preg_match('#^/tasks/([0-9a-f-]{36})/toggle$#i', $path, $m) && $method === '
         if ($cur === false) {
             $pdo->rollBack();
             http_response_code(404);
-            echo '<div class="text-sm text-red-600">Task not found.</div>';
+            echo '<div class="text-sm text-red-400">Task not found.</div>';
             return;
         }
         $next = ($cur === 'done') ? 'open' : 'done';
@@ -832,12 +822,12 @@ if (preg_match('#^/tasks/([0-9a-f-]{36})/toggle$#i', $path, $m) && $method === '
         echo '<ul class="space-y-2" id="task-items">';
         foreach ($rows as $r) {
             $done = $r['status'] === 'done';
-            $badge = $done ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800';
-            echo '<li class="flex items-center gap-3 text-sm border-b border-gray-100 pb-2">';
+            $badge = $done ? 'bg-emerald-900/40 text-emerald-300' : 'bg-amber-900/40 text-amber-300';
+            echo '<li class="flex items-center gap-3 text-sm border-b border-zinc-800/50 pb-2">';
             echo '<button hx-post="/tasks/' . htmlspecialchars($r['id']) . '/toggle" hx-target="#task-list" hx-swap="innerHTML"'
-                . ' class="w-5 h-5 rounded border ' . ($done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300') . ' flex items-center justify-center text-xs">'
+                . ' class="w-5 h-5 rounded border ' . ($done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-zinc-700') . ' flex items-center justify-center text-xs">'
                 . ($done ? '✓' : '') . '</button>';
-            echo '<span class="' . ($done ? 'line-through text-gray-400' : '') . ' flex-1">' . htmlspecialchars($r['title']) . '</span>';
+            echo '<span class="' . ($done ? 'line-through text-zinc-500' : '') . ' flex-1">' . htmlspecialchars($r['title']) . '</span>';
             echo '<span class="px-2 py-0.5 rounded text-xs ' . $badge . '">' . htmlspecialchars($r['status']) . '</span>';
             echo '</li>';
         }
@@ -845,13 +835,14 @@ if (preg_match('#^/tasks/([0-9a-f-]{36})/toggle$#i', $path, $m) && $method === '
     } catch (Throwable $e) {
         if (isset($pdo) && $pdo->inTransaction()) { $pdo->rollBack(); }
         http_response_code(500);
-        echo '<div class="text-sm text-red-600">Could not update task.</div>';
+        echo '<div class="text-sm text-red-400">Could not update task.</div>';
     }
     return;
 }
 
 // Phase 12c: AI Chat UI.
 if ($path === '/ai-ui' && $method === 'GET') {
+    Auth::requireLogin();
     header('Content-Type: text/html; charset=utf-8');
     $title = 'AI Chat';
     $active = 'ai';
@@ -864,6 +855,7 @@ if ($path === '/ai-ui' && $method === 'GET') {
 
 // Phase 12d: Documents UI.
 if ($path === '/documents' && $method === 'GET') {
+    Auth::requireLogin();
     header('Content-Type: text/html; charset=utf-8');
     $title = 'Documents';
     $active = 'documents';
@@ -874,42 +866,33 @@ if ($path === '/documents' && $method === 'GET') {
     return;
 }
 if ($path === '/documents/list' && $method === 'GET') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f-]{36}$/i', $tenantId)) {
-        echo '<div class="text-sm text-gray-500">Set a tenant UUID above.</div>';
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     try {
         $pdo = Db::connect();
         $pdo->beginTransaction();
         $pdo->exec("SET LOCAL app.current_tenant = '{$tenantId}'");
         $rows = $pdo->query(
-            "SELECT id, title, source_version FROM app.documents ORDER BY id DESC LIMIT 30"
+            "SELECT id, title FROM app.documents ORDER BY id DESC LIMIT 30"
         )->fetchAll(PDO::FETCH_ASSOC);
         $pdo->commit();
-        if (!$rows) { echo '<div class="text-sm text-gray-500">No documents yet.</div>'; return; }
+        if (!$rows) { echo '<div class="text-sm text-zinc-500">No documents yet.</div>'; return; }
         echo '<ul class="space-y-2 text-sm">';
         foreach ($rows as $r) {
-            echo '<li class="border-b border-gray-100 pb-2">';
+            echo '<li class="border-b border-zinc-800/50 pb-2">';
             echo '<div class="font-medium">' . htmlspecialchars($r['title']) . '</div>';
-            echo '<div class="text-xs text-gray-500 font-mono">' . htmlspecialchars(substr($r['id'], 0, 8)) . '… · v' . htmlspecialchars($r['source_version'] ?? '1') . '</div>';
+            echo '<div class="text-xs text-zinc-500 font-mono">' . htmlspecialchars(substr($r['id'], 0, 8)) . '…</div>';
             echo '</li>';
         }
         echo '</ul>';
     } catch (Throwable $e) {
         if (isset($pdo) && $pdo->inTransaction()) { $pdo->rollBack(); }
-        echo '<div class="text-sm text-red-600">Could not load documents.</div>';
+        echo '<div class="text-sm text-red-400">Could not load documents.</div>';
     }
     return;
 }
 if ($path === '/documents/search' && $method === 'GET') {
     header('Content-Type: text/html; charset=utf-8');
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    $q = trim($_GET['q'] ?? '');
-    if (!preg_match('/^[0-9a-f-]{36}$/i', $tenantId) || $q === '') {
-        echo '<div class="text-sm text-gray-500">Enter a query and set a tenant.</div>';
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     // Proxy to the existing /search API internally (same tenant scoping).
     // For the UI we do a simple ILIKE on chunks; vector search stays in /search.
     try {
@@ -924,24 +907,25 @@ if ($path === '/documents/search' && $method === 'GET') {
         $stmt->execute([':q' => '%' . $q . '%']);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $pdo->commit();
-        if (!$rows) { echo '<div class="text-sm text-gray-500">No matches.</div>'; return; }
+        if (!$rows) { echo '<div class="text-sm text-zinc-500">No matches.</div>'; return; }
         echo '<ul class="space-y-2 text-sm">';
         foreach ($rows as $r) {
-            echo '<li class="border-b border-gray-100 pb-2">';
+            echo '<li class="border-b border-zinc-800/50 pb-2">';
             echo '<div class="font-medium">' . htmlspecialchars($r['title']) . '</div>';
-            echo '<div class="text-gray-600">' . htmlspecialchars(mb_substr($r['content'], 0, 160)) . '…</div>';
+            echo '<div class="text-zinc-400">' . htmlspecialchars(mb_substr($r['content'], 0, 160)) . '…</div>';
             echo '</li>';
         }
         echo '</ul>';
     } catch (Throwable $e) {
         if (isset($pdo) && $pdo->inTransaction()) { $pdo->rollBack(); }
-        echo '<div class="text-sm text-red-600">Search failed.</div>';
+        echo '<div class="text-sm text-red-400">Search failed.</div>';
     }
     return;
 }
 
 // Phase 12e: Files UI.
 if ($path === '/objects-ui' && $method === 'GET') {
+    Auth::requireLogin();
     header('Content-Type: text/html; charset=utf-8');
     $title = 'Files';
     $active = 'objects';
@@ -952,11 +936,7 @@ if ($path === '/objects-ui' && $method === 'GET') {
     return;
 }
 if ($path === '/objects-ui/list' && $method === 'GET') {
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f-]{36}$/i', $tenantId)) {
-        echo '<div class="text-sm text-gray-500">Set a tenant UUID above.</div>';
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     try {
         $pdo = Db::connect();
         $pdo->beginTransaction();
@@ -966,16 +946,16 @@ if ($path === '/objects-ui/list' && $method === 'GET') {
              WHERE lifecycle_state <> 'deleted' ORDER BY created_at DESC LIMIT 30"
         )->fetchAll(PDO::FETCH_ASSOC);
         $pdo->commit();
-        if (!$rows) { echo '<div class="text-sm text-gray-500">No files yet.</div>'; return; }
+        if (!$rows) { echo '<div class="text-sm text-zinc-500">No files yet.</div>'; return; }
         echo '<ul class="space-y-2 text-sm">';
         foreach ($rows as $r) {
             $name = basename($r['object_key']);
             $size = $r['size'] ? number_format((int) $r['size']) . ' B' : '—';
             $badge = $r['lifecycle_state'] === 'uploaded'
-                ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800';
-            echo '<li class="flex items-center gap-3 border-b border-gray-100 pb-2">';
+                ? 'bg-emerald-900/40 text-emerald-300' : 'bg-amber-900/40 text-amber-300';
+            echo '<li class="flex items-center gap-3 border-b border-zinc-800/50 pb-2">';
             echo '<span class="flex-1 truncate font-medium">' . htmlspecialchars($name) . '</span>';
-            echo '<span class="text-gray-500 text-xs">' . $size . '</span>';
+            echo '<span class="text-zinc-500 text-xs">' . $size . '</span>';
             echo '<span class="px-2 py-0.5 rounded text-xs ' . $badge . '">' . htmlspecialchars($r['lifecycle_state']) . '</span>';
             echo '<button class="text-blue-600 text-xs hover:underline" '
                 . 'onclick="downloadFile(\'' . htmlspecialchars($r['id']) . '\')">Download</button>';
@@ -991,13 +971,14 @@ if ($path === '/objects-ui/list' && $method === 'GET') {
         </script>';
     } catch (Throwable $e) {
         if (isset($pdo) && $pdo->inTransaction()) { $pdo->rollBack(); }
-        echo '<div class="text-sm text-red-600">Could not load files.</div>';
+        echo '<div class="text-sm text-red-400">Could not load files.</div>';
     }
     return;
 }
 
 // Phase 12f: Workflows UI (n8n integration dashboard).
 if ($path === '/workflows' && $method === 'GET') {
+    Auth::requireLogin();
     header('Content-Type: text/html; charset=utf-8');
     $title = 'Workflows';
     $active = 'workflows';
@@ -1029,24 +1010,21 @@ if ($path === '/workflows/status' && $method === 'GET') {
     foreach ($out as [$name, $ok]) {
         $dot = $ok ? 'bg-emerald-500' : 'bg-red-500';
         echo '<li class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full ' . $dot . '"></span>'
-            . htmlspecialchars($name) . ' <span class="text-gray-500">· ' . ($ok ? 'ok' : 'down') . '</span></li>';
+            . htmlspecialchars($name) . ' <span class="text-zinc-500">· ' . ($ok ? 'ok' : 'down') . '</span></li>';
     }
-    echo '<li class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-gray-300"></span>'
-        . 'Queue mode <span class="text-gray-500">· ' . ($queue ? 'enabled' : 'regular mode') . '</span></li>';
+    echo '<li class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-zinc-700"></span>'
+        . 'Queue mode <span class="text-zinc-500">· ' . ($queue ? 'enabled' : 'regular mode') . '</span></li>';
     if (!$running) {
-        echo '<li class="text-xs text-gray-500 mt-2">Start n8n: <span class="font-mono">docker compose --profile n8n up -d</span></li>';
+        echo '<li class="text-xs text-zinc-500 mt-2">Start n8n: <span class="font-mono">docker compose --profile n8n up -d</span></li>';
     }
     echo '</ul>';
     return;
 }
 if ($path === '/workflows/test-job' && $method === 'POST') {
     header('Content-Type: text/html; charset=utf-8');
-    $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-    if (!preg_match('/^[0-9a-f-]{36}$/i', $tenantId)) {
-        echo '<span class="text-red-600">Set a tenant UUID in the header input.</span>';
-        return;
-    }
+    $tenantId = Auth::requireTenant();
     // Enqueue via the BMOS API (same call n8n would make).
+    // Forward the session cookie so the inner request is authenticated.
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'http://nginx/jobs/enqueue');
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -1056,25 +1034,27 @@ if ($path === '/workflows/test-job' && $method === 'POST') {
         'job_type' => 'task.created',
         'title' => 'n8n test job ' . date('H:i:s'),
     ]));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        "X-Tenant-ID: {$tenantId}",
-    ]);
+    $headers = ['Content-Type: application/json'];
+    if (!empty($_SERVER['HTTP_COOKIE'])) {
+        $headers[] = 'Cookie: ' . $_SERVER['HTTP_COOKIE'];
+    }
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     $body = (string) curl_exec($ch);
     $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     if ($code === 201 || $code === 200) {
         $d = json_decode($body, true);
-        echo '<span class="text-emerald-700">✓ Job enqueued: <span class="font-mono">' . htmlspecialchars($d['id'] ?? '?') . '</span>'
+        echo '<span class="text-emerald-400">✓ Job enqueued: <span class="font-mono">' . htmlspecialchars($d['id'] ?? '?') . '</span>'
             . (isset($d['deduplicated']) && $d['deduplicated'] ? ' (deduplicated)' : '') . '</span>';
     } else {
-        echo '<span class="text-red-600">Failed (HTTP ' . $code . '). Is n8n running? This test uses the BMOS API directly.</span>';
+        echo '<span class="text-red-400">Failed (HTTP ' . $code . '). Is n8n running? This test uses the BMOS API directly.</span>';
     }
     return;
 }
 
 // Phase 12g: Tenants UI + System Health UI.
 if ($path === '/tenants' && $method === 'GET') {
+    Auth::requireLogin();
     header('Content-Type: text/html; charset=utf-8');
     $title = 'Tenants';
     $active = 'tenants';
@@ -1086,25 +1066,29 @@ if ($path === '/tenants' && $method === 'GET') {
 }
 if ($path === '/tenants/list' && $method === 'GET') {
     try {
+        $uid = Auth::requireLogin();
         $pdo = Db::connect();
-        // No tenant scoping for the list itself (admin view); RLS still
-        // applies per the app role, so this shows what bmos_app can see.
-        $rows = $pdo->query("SELECT id, name FROM app.tenants ORDER BY name LIMIT 50")->fetchAll(PDO::FETCH_ASSOC);
-        if (!$rows) { echo '<div class="text-sm text-gray-500">No tenants.</div>'; return; }
+        // Show the tenants this user belongs to (via membership lookup).
+        $stmt = $pdo->prepare("SELECT tenant_id, tenant_name, role FROM app.get_user_memberships(:uid)");
+        $stmt->execute([':uid' => $uid]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (!$rows) { echo '<div class="text-sm text-zinc-500">No tenants.</div>'; return; }
         echo '<ul class="space-y-2 text-sm">';
         foreach ($rows as $r) {
-            echo '<li class="flex items-center gap-3 border-b border-gray-100 pb-2">';
-            echo '<span class="font-medium">' . htmlspecialchars($r['name']) . '</span>';
-            echo '<span class="font-mono text-xs text-gray-500">' . htmlspecialchars($r['id']) . '</span>';
+            echo '<li class="flex items-center gap-3 border-b border-zinc-800/50 pb-2">';
+            echo '<span class="font-medium">' . htmlspecialchars($r['tenant_name']) . '</span>';
+            echo '<span class="text-xs text-zinc-500">' . htmlspecialchars($r['role']) . '</span>';
+            echo '<span class="font-mono text-xs text-zinc-600">' . htmlspecialchars(substr($r['tenant_id'], 0, 8)) . '…</span>';
             echo '</li>';
         }
         echo '</ul>';
     } catch (Throwable $e) {
-        echo '<div class="text-sm text-red-600">Could not load tenants.</div>';
+        echo '<div class="text-sm text-red-400">Could not load tenants.</div>';
     }
     return;
 }
 if ($path === '/health-ui' && $method === 'GET') {
+    Auth::requireLogin();
     header('Content-Type: text/html; charset=utf-8');
     $title = 'System Health';
     $active = 'health';
@@ -1152,7 +1136,7 @@ if ($path === '/health-ui/services' && $method === 'GET') {
     foreach ($checks as $name => $ok) {
         $dot = $ok ? 'bg-emerald-500' : 'bg-red-500';
         echo '<li class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full ' . $dot . '"></span>'
-            . htmlspecialchars($name) . ' <span class="text-gray-500">· ' . ($ok ? 'ok' : 'down') . '</span></li>';
+            . htmlspecialchars($name) . ' <span class="text-zinc-500">· ' . ($ok ? 'ok' : 'down') . '</span></li>';
     }
     echo '</ul>';
     return;
@@ -1164,11 +1148,11 @@ if ($path === '/health-ui/database' && $method === 'GET') {
         echo '<ul class="space-y-1 text-sm font-mono">';
         foreach ($tables as $t) {
             $n = (int) $pdo->query("SELECT COUNT(*) FROM app.{$t}")->fetchColumn();
-            echo '<li class="flex justify-between"><span>app.' . $t . '</span><span class="text-gray-600">' . $n . ' rows</span></li>';
+            echo '<li class="flex justify-between"><span>app.' . $t . '</span><span class="text-zinc-400">' . $n . ' rows</span></li>';
         }
         echo '</ul>';
     } catch (Throwable $e) {
-        echo '<div class="text-sm text-red-600">DB unreachable.</div>';
+        echo '<div class="text-sm text-red-400">DB unreachable.</div>';
     }
     return;
 }
