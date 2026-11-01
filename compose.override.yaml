@@ -1,0 +1,9 @@
+# Local-dev overrides. Compose merges this file automatically.
+# Keep it minimal — every override here should have a reason.
+#
+# Example: temporary loopback-only Postgres access for a GUI client.
+# Remove after debugging:
+# services:
+#   postgres:
+#     ports:
+#       - "127.0.0.1:5433:5432"

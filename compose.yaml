@@ -1,97 +1,326 @@
+# BMOS 3.2 — Phase 5: transactional outbox + PHP worker.
+# Per the corrected build guide (Phase 5):
+#   - API transactions write the business record AND the outbox job atomically.
+#   - The worker claims jobs with FOR UPDATE SKIP LOCKED, sets
+#     app.current_tenant per job, and works under the same RLS rules as web.
+#   - DB passwords come from file-based Compose secrets (never .env).
+#   - PHP and the worker connect as bmos_app (least privilege, NOBYPASSRLS).
+# MinIO, n8n, Redis, and Lemonade are intentionally OUT of this milestone.
+name: nexgen-bmos
+
 services:
+  traefik:
+    image: traefik:v3
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./docker/traefik:/etc/traefik:ro
+    networks:
+      - edge
+    restart: unless-stopped
+
   nginx:
     image: nginx:1.28-alpine
-    ports:
-      - "127.0.0.1:8080:80"
     volumes:
       - ./app:/var/www/html:ro
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - php
     networks:
-      - app_net
+      - edge
+      - backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.bmos.rule=Host(`bmos.localhost`)"
+      - "traefik.http.routers.bmos.entrypoints=web"
+      - "traefik.http.services.bmos.loadbalancer.server.port=80"
     restart: unless-stopped
 
   php:
     build:
       context: .
-      dockerfile: docker/php.Dockerfile
+      dockerfile: docker/php/Dockerfile
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     env_file:
       - .env
     environment:
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_NAME: ${POSTGRES_DB:-nexgen}
-      DB_USER: ${POSTGRES_USER:-nexgen}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      DB_NAME: ${POSTGRES_DB:-bmos}
+      DB_USER: bmos_app
+      DB_PASSWORD_FILE: /run/secrets/app_password
+      S3_ENDPOINT: http://garage:3900
+      S3_REGION: garage
+      S3_BUCKET: bmos-objects
+      S3_KEY_ID_FILE: /run/secrets/garage_app_key_id
+      S3_SECRET_FILE: /run/secrets/garage_app_secret
+      # Phase 8: Lemonade runs on the Windows host (GPU), not in Docker.
+      # host.docker.internal is Docker Desktop's host gateway. The WSL
+      # gateway IP (e.g. 172.25.160.1) is a documented fallback only —
+      # never hardcode it here; override via .env if needed.
+      LEMONADE_URL: ${LEMONADE_URL:-http://host.docker.internal:13305}
+      LEMONADE_MODEL: ${LEMONADE_MODEL:-Qwen3.5-2B-GGUF}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: bmos_chunks
+      QDRANT_VECTOR_SIZE: "384"
+    secrets:
+      - app_password
+      - garage_app_key_id
+      - garage_app_secret
     volumes:
       - ./app:/var/www/html
+      - ./scripts:/var/www/html/scripts:ro
     depends_on:
       postgres:
         condition: service_healthy
     networks:
-      - app_net
-      - data_net
+      - backend
+      # Phase 8: also on edge (non-internal) so PHP can reach Lemonade on
+      # the Windows host. Backend stays for DB/Qdrant/Garage.
+      - edge
     restart: unless-stopped
 
-  # Background worker (V2.2 / V3.2). Same image as php, no ports.
-  # It runs app/worker.php --loop: ingestion jobs + expert jobs,
-  # claimed with FOR UPDATE SKIP LOCKED. It is NOT spawned per
-  # request. If you stop it, uploads stay "pending" until it restarts
-  # — nothing is lost, and stale 'processing' jobs are reclaimed
-  # after 10 minutes (see worker.php).
+  # Phase 5: outbox worker. Same image as php (pdo_pgsql is compiled in),
+  # same unprivileged user, same secret, same backend network — only the
+  # command differs: a long-running claim/work/record loop instead of FPM.
+  # One worker initially, per the guide's resource strategy for 16 GB.
   worker:
     build:
       context: .
-      dockerfile: docker/php.Dockerfile
+      dockerfile: docker/php/Dockerfile
+    command: ["php", "/var/www/html/worker/worker.php"]
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     env_file:
       - .env
     environment:
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_NAME: ${POSTGRES_DB:-nexgen}
-      DB_USER: ${POSTGRES_USER:-nexgen}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      LEMONADE_BASE_URL: ${LEMONADE_BASE_URL:-http://172.25.160.1:13305/v1}
-      LEMONADE_MODEL: ${LEMONADE_MODEL:-Qwen3.5-2B-GGUF}
+      DB_NAME: ${POSTGRES_DB:-bmos}
+      DB_USER: bmos_app
+      DB_PASSWORD_FILE: /run/secrets/app_password
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: bmos_chunks
+      QDRANT_VECTOR_SIZE: "384"
+    secrets:
+      - app_password
     volumes:
       - ./app:/var/www/html
-    command: ["php", "/var/www/html/worker.php", "--loop"]
     depends_on:
       postgres:
         condition: service_healthy
     networks:
-      - app_net
-      - data_net
+      - backend
+    restart: unless-stopped
+
+  # Phase 6: Qdrant vector database. Derived index only — PostgreSQL is the
+  # authoritative store for document/chunk metadata. Qdrant can be wiped and
+  # rebuilt from PostgreSQL at any time (scripts/rebuild-qdrant.php).
+  # Backend network only: only PHP talks to Qdrant, never the browser.
+  qdrant:
+    image: qdrant/qdrant:v1.13.0
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # Phase 7: Garage S3-compatible object storage (MinIO's Docker Hub repo
+  # was removed; Garage is the S3-compatible replacement). Backend network
+  # ONLY — the S3 API (:3900) is not published. Clients use presigned URLs
+  # minted by PHP after BMOS authorization. PHP uses a restricted Garage
+  # key (created by scripts/garage-init.sh), never the admin token.
+  garage:
+    image: dxflrs/garage:v2.4.1
+    command: ["/garage", "-c", "/etc/garage.toml", "server"]
+    volumes:
+      - garage_data:/var/lib/garage
+      - ./docker/garage.toml:/etc/garage.toml:ro
+    networks:
+      - backend
     restart: unless-stopped
 
   postgres:
-    # NOTE: plain postgres:17-alpine does NOT include pgvector.
-    # Retrieval works on full-text search without it (see migrate.php).
-    # To enable vectors later, change this image to
-    # pgvector/pgvector:pg17 and re-run migrate.php.
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-nexgen}
-      POSTGRES_USER: ${POSTGRES_USER:-nexgen}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-bmos}
+      POSTGRES_USER: ${POSTGRES_USER:-bmos}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+      - app_password
+      - migrator_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     networks:
-      - data_net
+      - backend
     healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 3s
       retries: 10
+      # First initdb on Docker Desktop/WSL2 can be slow; give it room
+      # before the first health verdict so a slow init isn't misread
+      # as unhealthy (which would abort `up` and strand php/nginx).
+      start_period: 60s
     restart: unless-stopped
 
+  # Phase 9: n8n workflow automation (profile-gated, NOT started by default).
+  # Start with: docker compose --profile n8n up -d
+  # Regular mode first (single instance). n8n calls BMOS APIs via the PHP
+  # endpoints — it NEVER bypasses BMOS authorization and gets NO direct
+  # database credentials to the BMOS app database.
+  # n8n uses its own Postgres database (n8n_db) on the same Postgres
+  # container, with a dedicated n8n_user (created by scripts/n8n-init.sh).
+  # The n8n UI is on the backend network only — access via the PHP proxy
+  # or port-forward for admin, not published by default.
+  n8n:
+    image: n8nio/n8n:1.113.0
+    profiles: ["n8n"]
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: n8n_db
+      DB_POSTGRESDB_USER: n8n_user
+      DB_POSTGRESDB_PASSWORD_FILE: /run/secrets/n8n_db_password
+      N8N_ENCRYPTION_KEY_FILE: /run/secrets/n8n_encryption_key
+      N8N_HOST: n8n
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      # Phase 10: set EXECUTIONS_MODE=queue and QUEUE_BULL_REDIS_HOST=redis
+      # in .env to enable Queue Mode (requires --profile queue).
+      # Default is regular mode (single instance).
+      EXECUTIONS_MODE: ${N8N_EXECUTIONS_MODE:-regular}
+      QUEUE_BULL_REDIS_HOST: ${N8N_REDIS_HOST:-}
+      QUEUE_BULL_REDIS_PORT: "6379"
+      # n8n calls BMOS via the internal nginx (backend network).
+      BMOS_API_URL: http://nginx
+    secrets:
+      - n8n_db_password
+      - n8n_encryption_key
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Phase 10 (optional): Redis for n8n Queue Mode.
+  # Profile-gated: docker compose --profile queue up -d
+  # When the queue profile is active, n8n runs in queue mode (main +
+  # workers); otherwise it stays in regular mode. Redis holds only
+  # ephemeral Bull job data — no business state.
+  redis:
+    image: redis:7-alpine
+    profiles: ["queue"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # Phase 10 (optional): n8n worker for Queue Mode.
+  # Scales workflow execution. The main n8n instance handles webhooks/API;
+  # workers pull jobs from Redis. Start with:
+  #   docker compose --profile n8n --profile queue up -d
+  n8n-worker:
+    image: n8nio/n8n:1.113.0
+    profiles: ["queue"]
+    command: ["worker"]
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: n8n_db
+      DB_POSTGRESDB_USER: n8n_user
+      DB_POSTGRESDB_PASSWORD_FILE: /run/secrets/n8n_db_password
+      N8N_ENCRYPTION_KEY_FILE: /run/secrets/n8n_encryption_key
+      EXECUTIONS_MODE: queue
+      QUEUE_BULL_REDIS_HOST: redis
+      QUEUE_BULL_REDIS_PORT: "6379"
+      N8N_HOST: n8n
+      N8N_PORT: "5678"
+    secrets:
+      - n8n_db_password
+      - n8n_encryption_key
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # Phase 11: Paperclip / coding-agent sandbox (profile-gated, LAST).
+  # Start with: docker compose --profile agents up -d
+  #
+  # SECURITY MODEL (guide):
+  #   - NO Docker socket mount (cannot control Docker or the host).
+  #   - NO production DB credentials (no postgres_password, app_password,
+  #     migrator_password; no direct database access at all).
+  #   - NO BMOS secrets (no Garage keys, no n8n keys).
+  #   - Backend network ONLY (can call BMOS APIs via http://nginx, which
+  #     enforce tenant auth; cannot reach the internet or the host).
+  #   - Narrow adapter: the agent performs specific tasks via the BMOS API,
+  #     it does not get shell access to production systems.
+  #   - Workspace volume for code/checkouts (ephemeral, not backed up).
+  #
+  # The agent authenticates to BMOS APIs using a dedicated API token
+  # (not a database password). Token issuance is out of scope for Phase 11;
+  # use the X-Tenant-ID demo header for local testing.
+  agent-sandbox:
+    image: php:8.4-cli-alpine
+    profiles: ["agents"]
+    command: ["sleep", "infinity"]
+    working_dir: /workspace
+    volumes:
+      - agent_workspace:/workspace
+    networks:
+      - backend
+    # Explicitly: no secrets, no Docker socket, no privileged mode.
+    # (Compose does not mount the socket unless asked; this comment is
+    # the guardrail — do NOT add /var/run/docker.sock here.)
+    restart: "no"
+
 networks:
-  app_net:
-  data_net:
+  edge:
+  backend:
     internal: true
 
 volumes:
   postgres_data:
+  qdrant_data:
+  garage_data:
+  n8n_data:
+  redis_data:
+  agent_workspace:
+
+# File-based secrets. The source files live in ./secrets/ (chmod 700 dir,
+# chmod 644 files, gitignored). Files must be 644, not 600: php-fpm workers
+# run as www-data inside the container and need to read app_password; the
+# 700 directory is what keeps other host users out. Compose bind-mounts
+# them at /run/secrets/<name> — they are NOT encrypted or RAM-only locally,
+# so protect the files and use a real secret manager for production later.
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  app_password:
+    file: ./secrets/app_password.txt
+  migrator_password:
+    file: ./secrets/migrator_password.txt
+  garage_app_key_id:
+    file: ./secrets/garage_app_key_id.txt
+  garage_app_secret:
+    file: ./secrets/garage_app_secret.txt
+  n8n_db_password:
+    file: ./secrets/n8n_db_password.txt
+  n8n_encryption_key:
+    file: ./secrets/n8n_encryption_key.txt

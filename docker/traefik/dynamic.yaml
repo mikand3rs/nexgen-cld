@@ -1,0 +1,2 @@
+# Traefik dynamic configuration — intentionally minimal for Phase 1.
+# TLS options, middlewares, and TCP routers land here in later phases.

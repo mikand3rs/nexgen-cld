@@ -1,0 +1,30 @@
+# BMOS 3.2 Phase 7 — Garage single-node config.
+# The rpc_secret and admin_token are injected at container start via
+# environment variables (see compose.yaml). This file holds non-secret
+# topology only.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+# rpc_public_addr must resolve inside the backend network.
+rpc_public_addr = "garage:3901"
+# Injected: GARAGE_RPC_SECRET env var (from secret file).
+rpc_secret = "${GARAGE_RPC_SECRET}"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage.localhost"
+
+[admin]
+api_bind_addr = "[::]:3903"
+# Injected: GARAGE_ADMIN_TOKEN env var (from secret file).
+admin_token = "${GARAGE_ADMIN_TOKEN}"

@@ -1,0 +1,18 @@
+# Traefik v3 static configuration — BMOS 3.2 Phase 1.
+# Phase 1 is HTTP only on :80. TLS lands in a later phase.
+
+entryPoints:
+  web:
+    address: ":80"
+
+providers:
+  docker:
+    # Only route containers that opt in with traefik.enable=true.
+    exposedByDefault: false
+    # Nginx is on two networks; without this Traefik can pick its
+    # internal backend IP, which Traefik cannot reach -> 504.
+    # This is the real Docker network name (compose prefixes it).
+    network: nexgen-bmos_edge
+
+log:
+  level: INFO

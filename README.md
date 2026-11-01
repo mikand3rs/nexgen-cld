@@ -1,204 +1,304 @@
-# NexGen CLD
+# NexGen CLD v4 (BMOS 3.2) — Multi-tenant Business OS
 
-A practical digital-services and business-operations platform for
-small businesses. PHP-native, server-rendered. PHP owns business
-logic, authorization, validation, orchestration, and persistence;
-workers own long-running execution.
+**PHP 8.4 + PostgreSQL 17 + Traefik + Nginx**, with Qdrant (vector search),
+Garage (S3-compatible objects), Lemonade (local GPU AI), n8n (workflows),
+Redis (optional queue), and a locked-down agent sandbox.
 
-- **V1 (already in this repo):** chat at `/`, PostgreSQL health at
-  `/health`, Lemonade (Qwen3.5-2B-GGUF) via `app/ai-connect.php`.
-- **V2 (this change):** document ingestion — secure uploads,
-  background ingestion worker, tenant-scoped retrieval chat.
-- **V3 (this change):** mixture of experts — expert registry,
-  rules-based router, orchestration jobs, per-expert retrieval,
-  synthesizer, seeded with a small-team catalogue for running
-  NexGen Cloud.
+**Architecture:** PHP-native, server-rendered. PHP owns business logic,
+auth, and persistence; PostgreSQL is authoritative for all business state
+with **forced row-level security** (tenant isolation is database-enforced,
+not code-filtered). Qdrant and Garage are rebuildable derived stores.
+The web UI is Tailwind CSS + HTMX + Alpine.js (Preline-inspired).
 
-## Quick start (in your local clone)
+## Stack
 
-```bash
-# 1. Copy the new files from the v2v3 zip into your local clone,
-#    review the diff, then:
-docker compose up --build -d
+| Service | Image | Role |
+|---------|-------|------|
+| Traefik | `traefik:v3` | Edge router (:80) |
+| Nginx | `nginx:1.28-alpine` | PHP-FPM reverse proxy |
+| PHP | `php:8.4-fpm-alpine` | API + web UI (server-rendered) |
+| Worker | (same PHP image) | Outbox job runner |
+| Postgres | `postgres:17-alpine` | Authoritative store, forced RLS |
+| Qdrant | `qdrant/qdrant:v1.13.0` | Vector index (rebuildable) |
+| Garage | `dxflrs/garage:v2.4.1` | S3-compatible objects |
+| n8n | `n8nio/n8n:1.113.0` | Workflows (profile-gated) |
+| Redis | `redis:7-alpine` | n8n queue (profile-gated, optional) |
 
-# 2. Migrate + seed (inside the php container)
-docker compose exec php php /var/www/html/db/migrate.php
+Lemonade Server runs on the **Windows host** (GPU), not in Docker.
+PHP reaches it via `LEMONADE_URL` (default `host.docker.internal:13305`).
 
-# 3. Start the worker (Compose already runs it as the worker service;
-#    this is the manual equivalent)
-docker compose exec php php /var/www/html/worker.php --loop
-
-# 4. Open the stack
-#    http://127.0.0.1:8080/            chat (v1, unchanged)
-#    http://127.0.0.1:8080/upload.php  upload documents
-#    http://127.0.0.1:8080/documents.php  document status
-#    http://127.0.0.1:8080/ask.php     ask the experts
-```
-
-Run the unit tests (no DB, no AI needed):
+## Quickstart
 
 ```bash
-php app/tests/run-tests.php
-# inside the container: docker compose exec php php /var/www/html/tests/run-tests.php
+# 1. Secrets (never commit these — see docs/secrets.md)
+mkdir -p secrets && chmod 700 secrets
+openssl rand -base64 24 | tr -d '\n' > secrets/postgres_password.txt
+openssl rand -base64 24 | tr -d '\n' > secrets/app_password.txt
+openssl rand -base64 24 | tr -d '\n' > secrets/migrator_password.txt
+openssl rand -hex 32 | tr -d '\n' > secrets/garage_rpc_secret.txt
+openssl rand -base64 24 | tr -d '\n' > secrets/garage_admin_token.txt
+touch secrets/garage_app_key_id.txt secrets/garage_app_secret.txt
+chmod 644 secrets/*.txt
+cp .env.example .env
+
+# 2. Start core stack
+bash scripts/garage-config.sh
+docker compose up -d
+bash scripts/migrate.sh          # applies 001–004
+bash scripts/garage-init.sh      # Garage bucket + restricted key
+docker compose restart php nginx
+
+# 3. Open the dashboard
+# http://bmos.localhost/dashboard
 ```
 
-## What was added, file by file
+Optional profiles:
+```bash
+bash scripts/n8n-init.sh
+docker compose --profile n8n up -d              # n8n (regular mode)
+docker compose --profile n8n --profile queue up -d  # + Redis queue mode
+docker compose --profile agents up -d           # agent sandbox
+```
 
-| File | What it does |
-|---|---|
-| `app/db/schema.sql` | tenants, documents, doc_chunks, ingestion_jobs, experts, tenant_expert_overrides, expert_runs, expert_jobs, plus RLS policies |
-| `app/db/migrate.php` | CLI: applies schema, tries pgvector (optional, see below), seeds tenant + experts |
-| `app/db/seeds/experts.json` | Expert catalogue templates, version 1 (source of truth for fresh deploys) |
-| `app/lib/db.php` | PDO + tenant resolution + private storage root |
-| `app/lib/ingestion.php` | Upload validation, PDF/text extraction, chunking (~1200 chars, ~200 overlap), ingestion |
-| `app/lib/retrieval.php` | Tenant-first FTS retrieval, grounded prompt, sources |
-| `app/lib/experts.php` | Registry loading, rules router, orchestrator, synthesizer |
-| `app/worker.php` | CLI worker: ingestion + expert jobs, `FOR UPDATE SKIP LOCKED`, retries, stale reclaim |
-| `app/public/upload.php` | Upload form + handler (GET form, POST multipart) |
-| `app/public/documents.php` | Per-tenant document + ingestion status view |
-| `app/public/ask.php` | Ask endpoint (JSON + form): router, single-expert sync, multi-expert poll |
-| `app/tests/run-tests.php` | Pure-function tests: chunking, routing, upload validation, seeds |
-| `compose.yaml` | Added `worker` service |
-| `docker/php.Dockerfile` | Added curl, mbstring, fileinfo, poppler-utils (pdftotext) |
+## Test suites
 
-V1 routes (`/`, `/chat`, `/health`) are unchanged, except for a
-navigation paragraph on the home page linking to the new pages.
+```bash
+bash scripts/test-isolation.sh  # 9 passed — RLS tenant isolation
+bash scripts/test-outbox.sh     # 17 passed — transactional outbox
+bash scripts/test-qdrant.sh     # 11 passed — vector search, tenant-filtered
+bash scripts/test-garage.sh     # 12 passed — S3 objects, presigned URLs
+bash scripts/test-lemonade.sh   # 6 passed — local AI chat
+bash scripts/test-n8n.sh        # 4 passed — workflow integration
+bash scripts/test-redis.sh      # queue mode (optional)
+bash scripts/test-agents.sh     # 7 passed — sandbox isolation
+```
 
-## Document ingestion (V2)
+## Web UI
 
-- **Accepted:** `.txt`, `.md`, `.pdf`, up to 10 MB.
-- **Rejected with a clear reason:** wrong extension, mismatched
-  actual type (finfo), empty file, oversized file.
-- **Out of scope for v2:** scanned-image OCR, `.docx`, spreadsheets.
-  Those are rejected or fail visibly, not silently stored.
-- **Storage:** `app/storage/uploads/<tenant_id>/<document_id>/<id>.<ext>`,
-  outside the public web root, never web-accessible, never executed.
-  Uploaded files are gitignored (`app/storage/`).
-- **Flow:** upload → document `pending` → ingestion job `pending` →
-  worker extracts → chunks → `indexed` (or `failed` with a visible
-  reason). The web request never runs ingestion and never calls
-  `exec()` to launch a worker. PDF extraction prefers `pdftotext`;
-  if it is missing, a pure-PHP FlateDecode fallback is tried, and
-  if that yields nothing, the job fails visibly.
-- **Collections:** upload picks a collection (`general`, `operations`,
-  `website`, `support`, `admin`). Experts retrieve only from their
-  declared collections (empty = all). This is how a website question
-  does not pull finance documents, and vice versa.
+Server-rendered PHP + Tailwind (CDN) + HTMX + Alpine.js, Preline-inspired.
+Sidebar IA: Command Center / Operations / AI Workforce / Automation / Administration.
 
-## Mixture of experts (V3) — seeded catalogue
+- `/dashboard` — stats, recent tasks, system status
+- `/tasks` — task management (HTMX)
+- `/ai-ui` — AI chat (Lemonade)
+- `/documents` — document search
+- `/objects-ui` — file upload/download (presigned URLs)
+- `/workflows` — n8n integration dashboard
+- `/tenants`, `/health-ui` — administration
 
-Seeded in `app/db/seeds/experts.json`, for a small team running
-NexGen Cloud. Every prompt says: answer from retrieved documents
-first, and never invent prices, dates, or commitments.
+Demo auth: `X-Tenant-ID` header (UUID). **Not real authentication** — replace
+before any multi-user deployment.
 
-| Slug | Role |
-|---|---|
-| `general-operations` | Day-to-day running: SOPs, checklists, scheduling |
-| `website` | Building/upgrading/integrating small business websites |
-| `client-onboarding` | Intake, scopes, proposals, client emails, handover |
-| `support` | Triage + fix-it for Docker, PHP, PostgreSQL, nginx, deployments |
-| `finance-admin` | Invoicing, pricing, subscriptions, admin paperwork |
-| `synthesizer` | Internal: combines expert answers, keeps sources, surfaces disagreements |
-| `router` | Internal: rules-based routing record, fallback = `general-operations` |
+---
 
-**Router:** rules-based keyword groups, deterministic and testable
-(see `app/tests/run-tests.php`). At most 2 experts per run.
-No match → `general-operations`. Never a random expert.
+## Phase build notes (historical)
 
-**Ask flow:**
-1. `POST /ask.php` with `tenant_slug`, `question`, optional
-   `expert_slug` (forces one expert, for testing/operator use).
-2. Router picks experts → orchestrator writes a run + jobs.
-3. Single expert (default sync): runs inline, returns answer + sources.
-4. Multi-expert: jobs run in the worker (sequentially, safe on the
-   laptop), synthesizer runs last, caller polls
-   `GET /ask.php?run_id=…&tenant_slug=…` until `completed`,
-   `partial` (some experts failed, labelled in the answer), or `failed`.
-5. Every answer lists its sources as `[n] document (chunk n)`.
+## The outbox pattern (Phase 5)
 
-**Per-expert retrieval:** every query filters `tenant_id` first,
-then the expert's collections, then full-text rank. Top-k comes
-from the expert config (default 5).
+`POST /jobs/enqueue` (demo auth stand-in: `X-Tenant-ID` header — NOT real
+authentication) writes a business record (`app.tasks`) **and** the outbox job
+(`app.outbox_jobs`) in **one** transaction: either both commit or neither does.
+A duplicate `idempotency_key` returns the original job with
+`"deduplicated": true` and writes nothing new.
 
-## Vector store / embedding decision — recorded, not locked in
+```bash
+curl -s -X POST http://bmos.localhost/jobs/enqueue \
+  -H "X-Tenant-ID: 11111111-1111-1111-1111-111111111111" \
+  -H 'Content-Type: application/json' \
+  -d '{"job_type":"task.created","title":"first task","idempotency_key":"demo-1"}'
+# {"job_id":"...","task_id":"...","status":"pending","deduplicated":false}
+```
 
-Retrieval in this change works on **PostgreSQL full-text search**
-(`content_tsv`, `ts_rank`). That is deliberate, because the
-vector-store decision from the V2/V3 plan was still open:
+The worker (`docker compose logs -f worker`) then:
+1. **Peeks** for a pending job with no tenant context (the only cross-tenant
+   read bmos_app gets — that is how a multi-tenant worker finds work).
+2. **Sets** `app.current_tenant` to the job's tenant — from here it is
+   RLS-bound exactly like a web request.
+3. **Claims** with `SELECT ... FOR UPDATE SKIP LOCKED` (a lost race claims
+   zero rows; a claim without tenant context is impossible by RLS design).
+4. **Works** (demo handlers: `task.created`, `demo.fail_once`) and
+5. **Records** `done` / `pending`-with-backoff / `dead`, then commits.
 
-- `migrate.php` tries `CREATE EXTENSION vector`. Plain
-  `postgres:17-alpine` does **not** include pgvector, so migration
-  prints a warning and continues without vectors — it does not fail.
-- To enable vectors later: change the postgres image in
-  `compose.yaml` to `pgvector/pgvector:pg17`, re-run `migrate.php`
-  (it adds `doc_chunks.embedding vector(1536)` + an HNSW index),
-  then implement `embed_question()` in `app/lib/retrieval.php`
-  with the **same model and dimensions** as the chunks.
-- Do **not** add Qdrant without a measured trigger from the
-  pgvector-vs-Qdrant research: filtered recall < 0.95 after tuning,
-  retrieval p95 > 200 ms, ~1–2 M vectors, or a second embedding
-  model becoming core. If that trigger fires, keep PostgreSQL as
-  truth and migrate vectors — do not replace this schema.
-- Embedding model is **not chosen** in this change. Chat model
-  (Qwen3.5-2B-GGUF via Lemonade) and embedding model are different
-  jobs, and shipping a guessed embedding call would produce wrong
-  vectors. Record the model + dimensions in the migration output
-  when you choose it.
+RLS note: `outbox_discovery` lets bmos_app SELECT pending jobs across tenants
+(worker discovery); every other operation on the table is tenant-scoped via
+`outbox_tenant_isolation`. No web endpoint exposes outbox rows in Phase 5, so
+the discovery exception never reaches a client. Real auth replaces the
+`X-Tenant-ID` header in a later phase.
 
-## Tenant isolation
+Shutdown note: the worker handles SIGTERM/SIGINT gracefully (finishes the
+current job, then exits). A SIGKILL/crash mid-job leaves the row in
+`claimed` — there is no automatic reaper in Phase 5; recover with
+`UPDATE app.outbox_jobs SET status='pending' WHERE status='claimed'` (as a
+superuser) or wait for the reaper in a later phase. Handlers must stay
+idempotent for exactly this reason.
 
-- Every document, chunk, job, run, and override row carries
-  `tenant_id`, and every query in `app/lib/*.php` filters it.
-- RLS policies in `schema.sql` are defense-in-depth for a future
-  non-owner app role. PostgreSQL RLS does **not** apply to the
-  table owner (the `nexgen` user the container uses), so the
-  tenant filter in code is the real enforcement today — do not
-  remove it from any query.
-- Manual gate (must pass before trusting this with real client
-  documents): Tenant A uploads a document; Tenant B asks a question
-  that document would answer. Tenant B must get no answer from
-  Tenant A's document, at the database level and at the chat level.
+## Notes
 
-## Security notes — read before exposing this beyond a trusted team
+- **Two networks:** `edge` (Traefik, Nginx) and `backend` (internal — Nginx, PHP, worker, PostgreSQL).
+  Nothing on `backend` can reach the host or internet. When Lemonade arrives (Phase 8),
+  PHP gets attached to an egress-capable network.
+- **Postgres is not published** and the app talks to it as `postgres:5432` over Docker DNS.
+  For a temporary GUI look, use the loopback example in `compose.override.yaml`.
+- **Secrets:** file-based Compose secrets under `secrets/`. Local Compose bind-mounts
+  them at `/run/secrets/<name>` — that is NOT encrypted or RAM-only storage, so the
+  files stay chmod 644 (php-fpm workers run as www-data and must read them;
+  the 700 directory is what blocks other host users) and out of Git. Real secret manager before production.
+- **Roles:** `bmos_owner` owns schemas/tables and can never log in; `bmos_migrator`
+  applies `migrations/*.sql`; `bmos_app` is the runtime role (`NOBYPASSRLS`) and the
+  only role the app, the worker, and the tests use. RLS is **forced**, so it applies even to
+  table owners; the tenant context comes from `SET app.current_tenant = '<uuid>'`
+  per transaction (`SET LOCAL` inside `BEGIN`/`COMMIT`).
+- **Liveness vs readiness:** `/health` never touches the database; `/ready` connects
+  as `bmos_app` and returns 503 while the database is unreachable.
 
-- **No authentication in this foundation.** Upload, documents,
-  and ask take a `tenant_slug` form/JSON field. That is fine for
-  a trusted small team on localhost, and **not** fine for a public
-  deployment. Add session auth and replace the tenant field with
-  the authenticated tenant before exposing it.
-- **`.env.example` was fixed in this change.** The previous version
-  in the repo contained a 36-character password value, not a
-  placeholder. Treat that value as exposed: rotate
-  `POSTGRES_PASSWORD` if it was ever used for a real database.
-  The new example uses `change-me-to-a-new-password`.
-- **Never commit `.env`, uploaded documents, or the storage folder.**
-  They are gitignored. Check `git status` before every commit.
-- **Never paste secrets into chat or terminal output.** A secret
-  that appears in chat/terminal is burned — generate a fresh one.
+## Version matrix
 
-## Manual gates (not covered by unit tests — run these on the stack)
+| Component  | Image / version used | Notes                    |
+|------------|----------------------|--------------------------|
+| Traefik    | `traefik:v3`         | Observed 3.7.17, 2026-11-01 |
+| Nginx      | `nginx:1.28-alpine`  |                          |
+| PHP        | `php:8.4-fpm-alpine` | `pdo_pgsql`, `pcntl` compiled in |
+| PostgreSQL | `postgres:17-alpine` |                          |
+| Qdrant     | `qdrant/qdrant:v1.13.0` | Derived vector index only |
+| Garage     | `dxflrs/garage:v2.4.1` | S3-compatible object storage, backend-only |
 
-1. Tenant isolation (above).
-2. Upload tests: oversized, wrong extension, mismatched type, empty,
-   and a PDF that extracts correctly.
-3. Retrieval tests: a question with a known answer in the documents,
-   a question with no answer (must say so, not invent), and a
-   partial-answer question.
-4. Worker tests: stop/restart the worker (pending jobs picked up,
-   not lost or duplicated), failed extraction, document deleted
-   mid-ingestion.
-5. Routing tests: the evaluation set in `app/tests/run-tests.php`,
-   plus low-confidence and out-of-scope questions.
-6. Failure tests: one expert fails while others succeed (answer
-   must be labelled `partial`, not silently wrong).
+Update one component at a time and re-run the gates.
 
-## Out of scope (unless you add them)
+## Phase 6 — Qdrant as a derived index
 
-- Public multi-tenant hosted deployment (production is a separate
-  design from the local WSL laptop stack).
-- OCR, `.docx`, spreadsheets.
-- A second orchestration layer alongside PHP (the 2026-10-19
-  LiteLLM / semantic-router stack is a separate experiment, not
-  run alongside this one in production without a stated reason).
-- Any feature that stores a tenant's documents, vectors, or chat
-  history without a tenant on every row.
+PostgreSQL (`app.documents`, `app.document_chunks`) is the authoritative
+store. Qdrant holds vectors only; every point payload carries `tenant_id`,
+`document_id`, `chunk_id`, and `source_version`, so the collection can be
+wiped and rebuilt from PostgreSQL at any time.
+
+- **Embeddings are demo placeholders** (`app/src/Embeddings.php`,
+  deterministic hash-based, no semantic meaning). The vector dimension comes
+  from `QDRANT_VECTOR_SIZE` (default 384) — never hardcoded — and must match
+  the real model once one is selected. Swap in a real model by replacing
+  `DemoEmbeddings::generate()`.
+- **Tenant filter is server-generated.** `POST /search` takes the tenant from
+  the `X-Tenant-ID` header; a `tenant_id` in the request body is ignored.
+  There is no unfiltered search path.
+- **Flow:** `POST /documents` → PostgreSQL → `scripts/index-documents.php`
+  (or the `document.index` outbox job) → Qdrant. `POST /search` → embed query
+  → Qdrant with tenant filter.
+
+```bash
+docker compose up -d
+bash scripts/migrate.sh                                    # APPLY 003-documents
+docker compose exec -T php php scripts/qdrant-init.php    # create collection
+bash scripts/test-qdrant.sh                               # 13 checks
+```
+
+Rebuild demo: `docker compose exec -T php php scripts/rebuild-qdrant.php`
+
+## What's next
+
+**Hard gate (met 2026-11-01):** all isolation tests pass (9/9 as `bmos_app`),
+so tenant isolation is database-enforced.
+
+**Phase 6 gate (met 2026-11-01):** 11/11 Qdrant checks — server-generated
+tenant filter on every query, forged client tenant IDs ignored, cross-tenant
+retrieval returns no foreign points, and wipe-and-rebuild restores the index
+without touching PostgreSQL.
+
+## Phase 7 — Garage S3 object storage
+
+PostgreSQL (`app.objects`) is authoritative for metadata; Garage holds bytes
+only. Clients never talk to Garage directly — they use short-lived presigned
+URLs minted by PHP after BMOS authorization:
+
+1. `POST /objects` → PG record (pending) + presigned PUT URL
+2. Client PUTs bytes directly to Garage
+3. `POST /objects/{id}/complete` → HEAD verification → state=uploaded
+4. `GET /objects/{id}/download` → tenant-checked presigned GET URL
+5. Client GETs bytes directly from Garage
+
+- **Not publicly exposed:** Garage's S3 API (:3900) is on
+  the backend network only — no published ports, no Traefik router.
+- **Non-root identity:** PHP's S3 client uses a restricted Garage key
+  (read+write on the bucket only, from secrets); the admin token is setup-only.
+- **Secrets:** create `secrets/garage_rpc_secret.txt` and
+  `secrets/garage_admin_token.txt` (see `docs/secrets.md`); the app key
+  files are created by the init script.
+
+```bash
+docker compose up -d
+bash scripts/migrate.sh                                    # APPLY 004-objects
+bash scripts/garage-config.sh                              # generate docker/garage.toml
+bash scripts/garage-init.sh                                # layout + bucket + app key
+bash scripts/test-garage.sh                                # 12 checks
+```
+
+## Phase 8 — Windows-hosted Lemonade
+
+Lemonade Server stays on the Windows host (GPU) — it is NOT a container.
+PHP reaches it at `LEMONADE_URL` (default `http://host.docker.internal:13305`,
+Docker Desktop's host gateway). Lemonade receives no PostgreSQL credentials
+and no BMOS secrets; it is pure inference. Qwen3.5 requests set
+`chat_template_kwargs.enable_thinking=false`.
+
+- `GET /ai/health` — Lemonade reachable? lists models.
+- `POST /ai/chat` — tenant-scoped chat (demo `X-Tenant-ID` header, same
+  stand-in as other endpoints; the tenant id never leaves PHP).
+
+```bash
+bash scripts/test-lemonade.sh   # needs Lemonade running on the Windows host
+```
+
+## Phase 9 — n8n workflow automation (profile-gated)
+
+n8n runs in regular mode (single instance), started only with
+`docker compose --profile n8n up -d`. It calls BMOS APIs via the PHP
+endpoints — never bypasses BMOS authorization, never gets direct DB
+credentials to the app database. n8n uses its own `n8n_db` Postgres
+database with a dedicated `n8n_user`.
+
+```bash
+bash scripts/n8n-init.sh                  # DB + user + secrets
+docker compose --profile n8n up -d        # start n8n
+bash scripts/test-n8n.sh                  # gates
+```
+
+## Phase 10 (optional) — Redis + n8n Queue Mode
+
+Redis holds ephemeral Bull job data only (no business state). n8n Queue
+Mode is opt-in: uncomment `N8N_EXECUTIONS_MODE=queue` and
+`N8N_REDIS_HOST=redis` in `.env`, then start with both profiles.
+
+```bash
+docker compose --profile n8n --profile queue up -d
+bash scripts/test-redis.sh
+```
+
+## Phase 11 — Paperclip / coding-agent sandbox (LAST)
+
+Sandboxed environment for AI coding agents. Profile-gated, locked down:
+
+- **NO** Docker socket (cannot control Docker/host).
+- **NO** production DB credentials (no direct database access).
+- **NO** BMOS secrets mounted.
+- Backend network only — calls BMOS APIs via `http://nginx` (auth enforced).
+- Narrow adapter: the agent uses the API, not shell access to prod.
+
+```bash
+docker compose --profile agents up -d
+bash scripts/test-agents.sh
+```
+
+All BMOS 3.2 phases complete.
+
+## Phase 12 — Dashboard UI (Preline-inspired)
+
+Server-rendered PHP + Tailwind (CDN) + HTMX + Alpine.js. Preline Admin
+Dashboard is the presentation inspiration; the sidebar IA follows the
+board guidelines (Command Center / Operations / AI Workforce / Automation /
+Administration).
+
+- `GET /` → redirect to `/dashboard`
+- `GET /dashboard` → shell + stats cards, recent tasks, system status
+  (HTMX partials: `/dashboard/stats`, `/dashboard/recent-tasks`,
+  `/dashboard/system`)
+- Tenant UUID input in the header; HTMX sends it as `X-Tenant-ID`.
+
+Next: Tasks UI, Documents UI, Files UI, AI Chat UI.
