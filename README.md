@@ -24,8 +24,9 @@ The web UI is Tailwind CSS + HTMX + Alpine.js in a dark "Figr Identity" aestheti
 | **Stage B: session idle timeout (8h), API key expiry/revocation** | ✅ Implemented |
 | **Stage B: worker leases, reaper, crash recovery** | ✅ Implemented |
 | **Stage B: read-only FS, dropped caps, no-new-privs** | ✅ Implemented |
-| **Stage B: Traefik HTTPS, HTTP→HTTPS, TLS 1.2+** | ✅ Implemented |
-| **Stage B: agent sandbox runner, disposable workspaces, approval gates** | ✅ Implemented |
+| **Stage B: TLS (opt-in via docs/tls.md)** | ✅ Implemented, opt-in |
+| Transport (default) | HTTP-only (:80); HTTPS via opt-in |
+| **Remediation: agent runner v2 (allowlist, BMOS approvals)** | ✅ Implemented |
 | **Stage B: X-Tenant-ID fully removed** | ✅ Verified |
 | Outbox + worker (17/17) | ✅ Implemented, integration tested |
 | Qdrant vector search (11/11) | ✅ Implemented, integration tested |
@@ -35,6 +36,26 @@ The web UI is Tailwind CSS + HTMX + Alpine.js in a dark "Figr Identity" aestheti
 | Agent sandbox (7/7) | ✅ Implemented, integration tested |
 | Dark web UI (dashboard, tasks, AI chat, docs, files, workflows, tenants, health) | ✅ Implemented |
 | Projects, Evidence/Approvals, audit UI | ⏳ Planned (Stage D) |
+
+### Remediation (AGENT-01 through QA-01)
+
+| Workstream | Status |
+|------------|--------|
+| AGENT-01: agent runner actually runs (not sleep) | ✅ Implemented |
+| AGENT-02: allowlist execution, no shell blacklist | ✅ Implemented |
+| GOV-01: BMOS-owned human approvals (migration 010) | ✅ Implemented |
+| WORKER-01: process-kill crash test | ✅ Implemented (`test-worker-crash.sh`) |
+| TLS-01: transport verification (HTTP-only / opt-in HTTPS) | ✅ Implemented |
+| DOC-01: README reconciled, stale claims removed | ✅ Implemented |
+| QA-01: canonical `scripts/verify.sh` | ✅ Implemented |
+
+**Agent runner v2:** `app/agent/agent-runner.php` — no `shell` action, no regex
+blacklist. Allowlisted operations only (`task.fetch`, `job.enqueue`, `api.call`,
+`file.write`, `file.read`, `http.fetch`). Consequential actions require a
+BMOS approval record (`POST /approvals/request`, human decides via
+`POST /approvals/{id}/decide`). The agent can never self-approve.
+
+**Verify everything:** `bash scripts/verify.sh`
 
 **Authentication:** real sessions (bcrypt + httponly cookies) and per-tenant
 Bearer API keys. Tenant identity comes from verified membership — the old
@@ -132,12 +153,13 @@ bash scripts/test-tls.sh             # HTTPS, redirect, cert validity
 - Docker socket: Traefik only (read-only, documented); all others have none
 - Postgres/Qdrant/Garage: backend network only, no published ports
 
-**TLS:**
-- Traefik HTTPS on :443, HTTP→HTTPS redirect (301)
-- TLS 1.2+ with strong cipher suites
+**TLS (opt-in):**
+- Default is HTTP-only on :80. To enable HTTPS: see `docs/tls.md`.
+- When enabled: Traefik HTTPS on :443, HTTP→HTTPS redirect (301),
+  TLS 1.2+ with strong cipher suites.
 - Local dev certs: `bash scripts/generate-dev-certs.sh`
-- Trust the CA: import `docker/certs/ca.crt` (Windows) or copy to
-  `/usr/local/share/ca-certificates/` (Linux)
+- Trust the CA: import `docker/traefik/certs/ca.crt` (Windows certmgr.msc)
+  or copy to `/usr/local/share/ca-certificates/` (Linux).
 
 **Agent sandbox:**
 - Real runner: `app/agent/agent-runner.php` (replaces sleep-infinity)

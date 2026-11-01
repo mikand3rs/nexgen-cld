@@ -73,7 +73,7 @@ docker compose exec -T -e "PGPASSWORD=$(cat secrets/postgres_password.txt)" post
    ON CONFLICT (id) DO NOTHING;" > /dev/null
 
 echo "--- upload flow: register → PUT bytes → complete ---"
-ROBJ="$(curl -s -X POST http://bmos.localhost/objects \ -b "$JAR" -H 'Content-Type: application/json' \
+ROBJ="$(curl -s -X POST http://bmos.localhost/objects -b "$JAR" -H 'Content-Type: application/json' \
   -d '{"filename":"hello.txt","media_type":"text/plain"}')"
 OID="$(jget "$ROBJ" id)"
 PUTURL="$(jget "$ROBJ" upload_url)"
@@ -95,11 +95,11 @@ docker run --rm --network nexgen-bmos_backend \
 PUTCODE="$(cat /tmp/bmos-put-code.txt)"
 check "PUT bytes to presigned URL" "200" "$PUTCODE"
 
-RCOMPLETE="$(curl -s -X POST "http://bmos.localhost/objects/${OID}/complete" \ -b "$JAR")"
+RCOMPLETE="$(curl -s -X POST "http://bmos.localhost/objects/${OID}/complete" -b "$JAR")"
 check "complete: state uploaded" "uploaded" "$(jget "$RCOMPLETE" lifecycle_state)"
 
 echo "--- download flow: presigned GET → bytes match ---"
-RDL="$(curl -s "http://bmos.localhost/objects/${OID}/download" \ -b "$JAR")"
+RDL="$(curl -s "http://bmos.localhost/objects/${OID}/download" -b "$JAR")"
 GETURL="$(jget "$RDL" download_url)"
 check "download: presigned GET url" "true" "$([ -n "$GETURL" ] && echo true || echo false)"
 # GET bytes via backend-network curl, compare.
@@ -112,7 +112,7 @@ GOTDATA="$(cat /tmp/bmos-dl.txt)"
 check "download: bytes match upload" "$TESTDATA" "$GOTDATA"
 
 echo "--- gate: tenant B cannot retrieve tenant A's object ---"
-RB="$(curl -s "http://bmos.localhost/objects/${OID}/download" \ -b "$JAR" -w "\n%{http_code}" )"
+RB="$(curl -s "http://bmos.localhost/objects/${OID}/download" -b "$JAR" -w "\n%{http_code}" )"
 BCODE="$(echo "$RB" | tail -1)"
 check "cross-tenant download: 404" "404" "$BCODE"
 # B's object list must not include A's object.

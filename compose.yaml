@@ -311,11 +311,12 @@ services:
   #
   # The agent authenticates to BMOS APIs using a dedicated API token
   # (not a database password). Token issuance is out of scope for Phase 11;
-  # use the X-Tenant-ID demo header for local testing.
   agent-sandbox:
     image: php:8.4-cli-alpine
     profiles: ["agents"]
-    command: ["sleep", "infinity"]
+    # AGENT-01: the container runs the agent runner, not sleep.
+    # Single-task mode: override command with a task file.
+    command: ["php", "/opt/agent/agent-runner.php", "--daemon"]
     working_dir: /workspace
     read_only: true
     cap_drop: [ALL]
@@ -328,11 +329,12 @@ services:
       - backend
     environment:
       BMOS_API_URL: http://nginx
-      # BMOS_API_KEY must be provided at runtime (scoped, tenant-bound).
-      # Generate via: Auth::createApiKey($tenantId, 'agent-<name>', 3600)
-    # Explicitly: no secrets, no Docker socket, no privileged mode.
-    # (Compose does not mount the socket unless asked; this comment is
-    # the guardrail — do NOT add /var/run/docker.sock here.)
+      BMOS_API_KEY_FILE: /run/secrets/agent_api_key
+    secrets:
+      - agent_api_key
+    # Explicitly: no Docker socket, no privileged mode, no host network,
+    # no DB credentials. (Compose does not mount the socket unless asked;
+    # this comment is the guardrail — do NOT add /var/run/docker.sock here.)
     restart: "no"
 
 networks:
@@ -357,6 +359,8 @@ volumes:
 secrets:
   postgres_password:
     file: ./secrets/postgres_password.txt
+  agent_api_key:
+    file: ./secrets/agent_api_key.txt
   app_password:
     file: ./secrets/app_password.txt
   migrator_password:

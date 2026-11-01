@@ -44,7 +44,7 @@ check "authenticated enqueue → 201 (no tenant header)" [ "$CODE" = "201" ]
 
 # 5. /auth/me returns user + tenants.
 ME=$(curl -s -b "$COOKIES" "$BASE/auth/me")
-check "/auth/me returns email" echo "$ME" | grep -q "admin@bmos.local"
+check "/auth/me returns email" echo "$ME" | grep -q "$ADMIN_EMAIL"
 
 # 6. Forged tenant header is ignored (session wins).
 # (No header to forge anymore — the endpoint doesn't read it.)

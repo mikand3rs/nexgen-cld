@@ -484,6 +484,166 @@ if (preg_match('#^/objects/([0-9a-f-]{36})$#i', $path, $m) && $method === 'DELET
     return;
 }
 
+// ---------------------------------------------------------------------------
+// GOV-01: BMOS-owned human approvals.
+// An agent requests approval for a consequential action. An authenticated
+// HUMAN (session only, never an API key) approves or rejects. The agent
+// can never approve its own request. Approvals are single-use and expire.
+// ---------------------------------------------------------------------------
+
+if ($path === '/approvals/request' && $method === 'POST') {
+    $tenantId = Auth::requireTenant();
+    $body = json_decode((string) file_get_contents('php://input'), true) ?? [];
+    $taskId = $body['task_id'] ?? '';
+    $action = $body['action'] ?? '';
+    $payload = $body['payload'] ?? [];
+    if ($taskId === '' || $action === '') {
+        http_response_code(400);
+        echo json_encode(['error' => 'task_id and action required']);
+        return;
+    }
+    // The requester's identity (agent email or API key name).
+    $me = Auth::userId();
+    $requestedBy = $me ?: 'api-key';
+
+    $payloadHash = hash('sha256', json_encode($payload));
+    try {
+        $pdo = Db::connect();
+        $pdo->beginTransaction();
+        $pdo->exec("SET LOCAL app.current_tenant = '{$tenantId}'");
+        $stmt = $pdo->prepare(
+            "INSERT INTO app.approvals (tenant_id, task_id, action, payload_hash, payload, requested_by)
+             VALUES (:t, :task, :a, :h, :p::jsonb, :r) RETURNING id, expires_at"
+        );
+        $stmt->execute([
+            ':t' => $tenantId, ':task' => $taskId, ':a' => $action,
+            ':h' => $payloadHash, ':p' => json_encode($payload), ':r' => $requestedBy,
+        ]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $pdo->commit();
+        http_response_code(201);
+        echo json_encode(['id' => $row['id'], 'status' => 'pending', 'expires_at' => $row['expires_at']]);
+    } catch (Exception $e) {
+        if (isset($pdo)) $pdo->rollBack();
+        http_response_code(500);
+        echo json_encode(['error' => 'approval request failed']);
+    }
+    return;
+}
+
+if (preg_match('#^/approvals/([0-9a-f-]{36})$#', $path, $m) && $method === 'GET') {
+    $tenantId = Auth::requireTenant();
+    try {
+        $pdo = Db::connect();
+        $pdo->beginTransaction();
+        $pdo->exec("SET LOCAL app.current_tenant = '{$tenantId}'");
+        $stmt = $pdo->prepare("SELECT * FROM app.approvals WHERE id = :id");
+        $stmt->execute([':id' => $m[1]]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $pdo->commit();
+        if (!$row) {
+            http_response_code(404);
+            echo json_encode(['error' => 'not found']);
+            return;
+        }
+        // Don't leak the full payload to non-humans unnecessarily; but the
+        // agent needs the hash to validate. Return metadata + hash.
+        echo json_encode([
+            'id' => $row['id'], 'task_id' => $row['task_id'],
+            'action' => $row['action'], 'payload_hash' => $row['payload_hash'],
+            'status' => $row['status'], 'requested_by' => $row['requested_by'],
+            'decided_by' => $row['decided_by'], 'expires_at' => $row['expires_at'],
+        ]);
+    } catch (Exception $e) {
+        if (isset($pdo)) $pdo->rollBack();
+        http_response_code(500);
+        echo json_encode(['error' => 'lookup failed']);
+    }
+    return;
+}
+
+if (preg_match('#^/approvals/([0-9a-f-]{36})/decide$#', $path, $m) && $method === 'POST') {
+    // HUMAN ONLY: session auth, not API key. requireLogin ensures a human session.
+    Auth::requireLogin();
+    $humanEmail = Auth::userEmail();
+    // Determine tenant from session (the human's active tenant).
+    $tenantId = Auth::currentTenantId();
+    if (!$tenantId) {
+        http_response_code(400);
+        echo json_encode(['error' => 'no active tenant']);
+        return;
+    }
+    $body = json_decode((string) file_get_contents('php://input'), true) ?? [];
+    $decision = $body['decision'] ?? '';
+    if (!in_array($decision, ['approved', 'rejected'], true)) {
+        http_response_code(400);
+        echo json_encode(['error' => "decision must be 'approved' or 'rejected'"]);
+        return;
+    }
+    try {
+        $pdo = Db::connect();
+        $pdo->beginTransaction();
+        $pdo->exec("SET LOCAL app.current_tenant = '{$tenantId}'");
+        // Lock the row.
+        $stmt = $pdo->prepare("SELECT * FROM app.approvals WHERE id = :id FOR UPDATE");
+        $stmt->execute([':id' => $m[1]]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            $pdo->rollBack();
+            http_response_code(404);
+            echo json_encode(['error' => 'not found']);
+            return;
+        }
+        // Cannot decide twice.
+        if ($row['status'] !== 'pending') {
+            $pdo->rollBack();
+            http_response_code(409);
+            echo json_encode(['error' => "already {$row['status']}"]);
+            return;
+        }
+        // AGENT CANNOT SELF-APPROVE: the decider must differ from the requester.
+        if ($row['requested_by'] === $humanEmail) {
+            $pdo->rollBack();
+            http_response_code(403);
+            echo json_encode(['error' => 'cannot approve your own request']);
+            return;
+        }
+        // Expiry check.
+        if (strtotime($row['expires_at']) < time()) {
+            $pdo->prepare("UPDATE app.approvals SET status='expired' WHERE id=:id")
+                ->execute([':id' => $m[1]]);
+            $pdo->commit();
+            http_response_code(410);
+            echo json_encode(['error' => 'approval expired']);
+            return;
+        }
+        $stmt = $pdo->prepare(
+            "UPDATE app.approvals SET status=:s, decided_by=:d, decided_at=now() WHERE id=:id"
+        );
+        $stmt->execute([':s' => $decision, ':d' => $humanEmail, ':id' => $m[1]]);
+        $pdo->commit();
+        echo json_encode(['id' => $m[1], 'status' => $decision]);
+    } catch (Exception $e) {
+        if (isset($pdo)) $pdo->rollBack();
+        http_response_code(500);
+        echo json_encode(['error' => 'decision failed']);
+    }
+    return;
+}
+
+// Agent task queue (minimal): the runner polls for work assigned to its identity.
+// Tasks are BMOS app.tasks rows with a specific job_type. For now, /next returns
+// 404 when nothing is assigned; the approval flow above is the enforced gate.
+
+if ($path === '/agent/tasks/next' && $method === 'GET') {
+    $tenantId = Auth::requireTenant();
+    // No task queue yet — the runner polls and gets 404 (no work).
+    // Future: SELECT ... FOR UPDATE SKIP LOCKED from an agent_tasks table.
+    http_response_code(404);
+    echo json_encode(['error' => 'no tasks assigned']);
+    return;
+}
+
 if ($path === '/ready') {
     try {
         $pdo = Db::connect();
