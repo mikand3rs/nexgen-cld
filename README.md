@@ -21,6 +21,12 @@ The web UI is Tailwind CSS + HTMX + Alpine.js in a dark "Figr Identity" aestheti
 | Core stack (Traefik → Nginx → PHP → Postgres) | ✅ Implemented, integration tested |
 | Tenant isolation (forced RLS, 9/9 tests) | ✅ Security verified |
 | Stage A authentication (sessions + API keys) | ✅ Implemented, integration tested |
+| **Stage B: session idle timeout (8h), API key expiry/revocation** | ✅ Implemented |
+| **Stage B: worker leases, reaper, crash recovery** | ✅ Implemented |
+| **Stage B: read-only FS, dropped caps, no-new-privs** | ✅ Implemented |
+| **Stage B: Traefik HTTPS, HTTP→HTTPS, TLS 1.2+** | ✅ Implemented |
+| **Stage B: agent sandbox runner, disposable workspaces, approval gates** | ✅ Implemented |
+| **Stage B: X-Tenant-ID fully removed** | ✅ Verified |
 | Outbox + worker (17/17) | ✅ Implemented, integration tested |
 | Qdrant vector search (11/11) | ✅ Implemented, integration tested |
 | Garage S3 objects (12/12) | ✅ Implemented, integration tested |
@@ -28,8 +34,6 @@ The web UI is Tailwind CSS + HTMX + Alpine.js in a dark "Figr Identity" aestheti
 | n8n workflows (4/4) | ✅ Implemented, integration tested |
 | Agent sandbox (7/7) | ✅ Implemented, integration tested |
 | Dark web UI (dashboard, tasks, AI chat, docs, files, workflows, tenants, health) | ✅ Implemented |
-| Worker crash recovery | ⏳ Planned (Stage B) |
-| TLS / HTTPS | ⏳ Planned (Stage C) |
 | Projects, Evidence/Approvals, audit UI | ⏳ Planned (Stage D) |
 
 **Authentication:** real sessions (bcrypt + httponly cookies) and per-tenant
@@ -100,7 +104,46 @@ bash scripts/test-n8n.sh        # 4 passed — workflow integration
 bash scripts/test-auth.sh       # 6 passed — session auth, API keys
 bash scripts/test-agents.sh     # 7 passed — sandbox isolation
 bash scripts/test-redis.sh      # queue mode (optional)
+# Stage B:
+bash scripts/test-cross-tenant.sh    # cross-tenant isolation via HTTP
+bash scripts/test-worker-recovery.sh # kill worker mid-job, verify reaper
+bash scripts/test-hardening.sh       # read-only FS, caps, no-new-privs
+bash scripts/test-tls.sh             # HTTPS, redirect, cert validity
 ```
+
+## Stage B — security & reliability
+
+**Auth hardening:**
+- Session idle timeout (8 hours)
+- API keys: expiration (`expires_at`) and revocation (`revoked_at`)
+- Secure cookie flag auto-enabled over HTTPS
+- `X-Tenant-ID` demo header fully removed from code and tests
+
+**Worker reliability:**
+- Leases: claimed jobs hold a 60s lease, renewed via heartbeat
+- Reaper: `app.reap_expired_leases()` (SECURITY DEFINER) recovers dead workers' jobs
+- Bounded retries (max 5) with exponential backoff → dead-letter
+- All handlers must be idempotent
+
+**Container hardening:**
+- Read-only root filesystems (php, nginx, worker) with tmpfs for /tmp
+- `cap_drop: [ALL]` everywhere; minimal caps added back only where needed
+- `no-new-privileges` on all services
+- Docker socket: Traefik only (read-only, documented); all others have none
+- Postgres/Qdrant/Garage: backend network only, no published ports
+
+**TLS:**
+- Traefik HTTPS on :443, HTTP→HTTPS redirect (301)
+- TLS 1.2+ with strong cipher suites
+- Local dev certs: `bash scripts/generate-dev-certs.sh`
+- Trust the CA: import `docker/certs/ca.crt` (Windows) or copy to
+  `/usr/local/share/ca-certificates/` (Linux)
+
+**Agent sandbox:**
+- Real runner: `app/agent/agent-runner.php` (replaces sleep-infinity)
+- Disposable `/tmp` workspaces, wiped after each task
+- Scoped BMOS API keys (tenant-bound, expirable)
+- Destructive commands blocked without human approval file
 
 ## Web UI
 

@@ -4,3 +4,4 @@ secrets/*
 backups/*
 !backups/.gitkeep
 docker/garage.toml
+docker/traefik/certs/*

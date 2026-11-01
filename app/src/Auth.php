@@ -4,6 +4,9 @@
 // membership, never from a client-supplied header.
 
 class Auth {
+    /** Idle session timeout: 8 hours. */
+    private const IDLE_TIMEOUT = 28800;
+
     public static function startSession(): void {
         if (session_status() === PHP_SESSION_NONE) {
             // Ensure a writable session path (php:8.4-fpm-alpine default may be unset).
@@ -16,9 +19,18 @@ class Auth {
             ini_set('session.cookie_samesite', 'Lax');
             ini_set('session.cookie_path', '/');
             ini_set('session.cookie_lifetime', '0');
-            // ini_set('session.cookie_secure', '1'); // enable with TLS
+            // Secure flag when served over HTTPS (Stage B TLS).
+            if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+                ini_set('session.cookie_secure', '1');
+            }
             session_start();
         }
+        // Idle timeout: destroy sessions inactive longer than IDLE_TIMEOUT.
+        if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > self::IDLE_TIMEOUT)) {
+            self::logout();
+            return;
+        }
+        $_SESSION['last_activity'] = time();
     }
 
     public static function login(string $email, string $password): ?array {
@@ -122,12 +134,15 @@ class Auth {
 
     /**
      * Verify an API key (for server-to-server, e.g. n8n).
-     * Returns the tenant UUID, or null.
+     * Returns the tenant UUID, or null. Expired or revoked keys never verify.
      */
     public static function verifyApiKey(string $key): ?string {
         $pdo = Db::connect();
         // Compare against stored hashes. (Small table; fine for now.)
-        $rows = $pdo->query("SELECT id, tenant_id, key_hash FROM app.api_keys")->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $pdo->query(
+            "SELECT id, tenant_id, key_hash, expires_at, revoked_at FROM app.api_keys
+             WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())"
+        )->fetchAll(PDO::FETCH_ASSOC);
         foreach ($rows as $r) {
             if (password_verify($key, $r['key_hash'])) {
                 $upd = $pdo->prepare("UPDATE app.api_keys SET last_used_at = now() WHERE id = :id");
@@ -139,21 +154,37 @@ class Auth {
     }
 
     /** Create an API key for a tenant. Returns the plaintext key (show once). */
-    public static function createApiKey(string $tenantId, string $name): string {
+    public static function createApiKey(string $tenantId, string $name, ?int $ttlSeconds = null): string {
         $key = 'bmos_' . bin2hex(random_bytes(32));
         $pdo = Db::connect();
+        $expires = $ttlSeconds ? date('Y-m-d H:i:s', time() + $ttlSeconds) : null;
         $stmt = $pdo->prepare("
-            INSERT INTO app.api_keys (tenant_id, name, key_hash)
-            VALUES (:tid, :name, :hash)
-            ON CONFLICT (tenant_id, name) DO UPDATE SET key_hash = EXCLUDED.key_hash
+            INSERT INTO app.api_keys (tenant_id, name, key_hash, expires_at)
+            VALUES (:tid, :name, :hash, :exp)
+            ON CONFLICT (tenant_id, name) DO UPDATE SET
+                key_hash = EXCLUDED.key_hash,
+                expires_at = EXCLUDED.expires_at,
+                revoked_at = NULL
             RETURNING id
         ");
         $stmt->execute([
             ':tid' => $tenantId,
             ':name' => $name,
             ':hash' => password_hash($key, PASSWORD_DEFAULT),
+            ':exp' => $expires,
         ]);
         return $key;
+    }
+
+    /** Revoke an API key by name (tenant-scoped). */
+    public static function revokeApiKey(string $tenantId, string $name): bool {
+        $pdo = Db::connect();
+        $stmt = $pdo->prepare("
+            UPDATE app.api_keys SET revoked_at = now()
+            WHERE tenant_id = :tid AND name = :name AND revoked_at IS NULL
+        ");
+        $stmt->execute([':tid' => $tenantId, ':name' => $name]);
+        return $stmt->rowCount() > 0;
     }
 
     /**

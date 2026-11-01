@@ -13,7 +13,15 @@ services:
     image: traefik:v3
     ports:
       - "80:80"
+      - "443:443"
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     volumes:
+      # Docker socket: required for Traefik service discovery. Read-only,
+      # and this is the ONLY service with socket access. A socket proxy
+      # (e.g. tecnativa/docker-socket-proxy) is the production upgrade.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./docker/traefik:/etc/traefik:ro
     networks:
@@ -22,6 +30,14 @@ services:
 
   nginx:
     image: nginx:1.28-alpine
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE, CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
     volumes:
       - ./app:/var/www/html:ro
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
@@ -32,7 +48,7 @@ services:
       - backend
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.bmos.rule=Host(`bmos.localhost`)"
+      - "traefik.http.routers.bmos.rule=Host(`bmos.localhost`) || Host(`localhost`)"
       - "traefik.http.routers.bmos.entrypoints=web"
       - "traefik.http.services.bmos.loadbalancer.server.port=80"
     restart: unless-stopped
@@ -42,6 +58,10 @@ services:
       context: .
       dockerfile: docker/php/Dockerfile
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     env_file:
       - .env
     environment:
@@ -69,7 +89,7 @@ services:
       - garage_app_key_id
       - garage_app_secret
     volumes:
-      - ./app:/var/www/html
+      - ./app:/var/www/html:ro
       - ./scripts:/var/www/html/scripts:ro
     depends_on:
       postgres:
@@ -91,6 +111,10 @@ services:
       dockerfile: docker/php/Dockerfile
     command: ["php", "/var/www/html/worker/worker.php"]
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     env_file:
       - .env
     environment:
@@ -105,7 +129,7 @@ services:
     secrets:
       - app_password
     volumes:
-      - ./app:/var/www/html
+      - ./app:/var/www/html:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -119,6 +143,9 @@ services:
   # Backend network only: only PHP talks to Qdrant, never the browser.
   qdrant:
     image: qdrant/qdrant:v1.13.0
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
     volumes:
       - qdrant_data:/qdrant/storage
     networks:
@@ -142,6 +169,9 @@ services:
 
   postgres:
     image: postgres:17-alpine
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-bmos}
       POSTGRES_USER: ${POSTGRES_USER:-bmos}
@@ -178,6 +208,8 @@ services:
   n8n:
     image: n8nio/n8n:1.113.0
     profiles: ["n8n"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
@@ -218,6 +250,8 @@ services:
     image: redis:7-alpine
     profiles: ["queue"]
     command: ["redis-server", "--appendonly", "yes"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     volumes:
       - redis_data:/data
     networks:
@@ -232,6 +266,8 @@ services:
     image: n8nio/n8n:1.113.0
     profiles: ["queue"]
     command: ["worker"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
@@ -281,10 +317,19 @@ services:
     profiles: ["agents"]
     command: ["sleep", "infinity"]
     working_dir: /workspace
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     volumes:
       - agent_workspace:/workspace
+      - ./app/agent:/opt/agent:ro
     networks:
       - backend
+    environment:
+      BMOS_API_URL: http://nginx
+      # BMOS_API_KEY must be provided at runtime (scoped, tenant-bound).
+      # Generate via: Auth::createApiKey($tenantId, 'agent-<name>', 3600)
     # Explicitly: no secrets, no Docker socket, no privileged mode.
     # (Compose does not mount the socket unless asked; this comment is
     # the guardrail — do NOT add /var/run/docker.sock here.)

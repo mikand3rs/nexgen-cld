@@ -12,6 +12,9 @@ set -euo pipefail
 set -o pipefail
 cd "$(dirname "$0")/.."
 
+# Stage B: session auth (replaces X-Tenant-ID demo header).
+JAR=$(bash scripts/test-auth-helper.sh) || exit 1
+
 set -a
 [ -f .env ] && . ./.env
 set +a
@@ -64,15 +67,13 @@ check "LEMONADE_URL uses host gateway" "true" "$(echo "$PENV" | grep -Eq "host.d
 check "no POSTGRES_PASSWORD in php env" "true" "$(echo "$PENV" | grep -q "POSTGRES_PASSWORD=" && echo false || echo true)"
 
 echo "--- gate: chat round-trip (tenant-scoped) ---"
-RCHAT="$(curl -s -m 120 -X POST http://bmos.localhost/ai/chat \
-  -H "X-Tenant-ID: $TENANT_A" -H 'Content-Type: application/json' \
+RCHAT="$(curl -s -m 120 -X POST http://bmos.localhost/ai/chat \ -b "$JAR" -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"Reply with exactly: BMOS-OK"}]}')"
 CONTENT="$(jget "$RCHAT" content)"
 check "ai/chat: got content" "true" "$([ -n "$CONTENT" ] && echo true || echo false)"
 echo "chat reply (first 120 chars): $(echo "$CONTENT" | head -c 120)"
 # Tenant isolation on the endpoint: bad UUID rejected, unknown tenant 404.
-RBAD="$(curl -s -o /dev/null -w "%{http_code}" -X POST http://bmos.localhost/ai/chat \
-  -H "X-Tenant-ID: not-a-uuid" -H 'Content-Type: application/json' \
+RBAD="$(curl -s -o /dev/null -w "%{http_code}" -X POST http://bmos.localhost/ai/chat \ -b "$JAR" -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"hi"}]}')"
 check "ai/chat: bad tenant UUID → 400" "400" "$RBAD"
 

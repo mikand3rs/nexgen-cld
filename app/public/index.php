@@ -10,7 +10,7 @@
 //                       AND the outbox job row atomically. The PHP worker
 //                       delivers the job later.
 //
-// DEMO AUTH STAND-IN: /jobs/enqueue takes the tenant from the X-Tenant-ID
+// AUTH: /jobs/enqueue takes the tenant from the verified session or Bearer key
 // header. That header is NOT authentication — it is a placeholder until a
 // later phase wires real login. Do not treat it as a security boundary.
 header('Content-Type: application/json');
@@ -252,7 +252,7 @@ if ($path === '/documents' && $method === 'POST') {
 
 if ($path === '/search' && $method === 'POST') {
     // Tenant-filtered vector search. The tenant filter is SERVER-GENERATED
-    // from the X-Tenant-ID header. A tenant_id in the request body is
+    // from the verified session. A tenant_id in the request body is
     // IGNORED (forged client tenant IDs must not change the filter).
     $tenantId = Auth::requireTenant();
     $body = json_decode((string) file_get_contents('php://input'), true);
@@ -512,7 +512,7 @@ if ($path === '/ready') {
 
 // Phase 8: Lemonade (Windows-hosted) endpoints.
 // Lemonade is inference-only: no DB credentials, no tenant data leaves PHP
-// except the prompt itself. Tenant scoping stays in PHP (demo: X-Tenant-ID
+// except the prompt itself. Tenant scoping stays in PHP (verified session
 // header validated as UUID, same stand-in as other endpoints).
 
 // GET /ai/health → is Lemonade reachable? lists models (no auth needed).
@@ -964,8 +964,7 @@ if ($path === '/objects-ui/list' && $method === 'GET') {
         echo '</ul>';
         echo '<script>
         function downloadFile(id) {
-          const tenant = document.getElementById("tenant-input").value;
-          fetch("/objects/" + id + "/download", { headers: { "X-Tenant-ID": tenant } })
+          fetch("/objects/" + id + "/download")
             .then(r => r.json()).then(d => { if (d.download_url) window.open(d.download_url, "_blank"); });
         }
         </script>';

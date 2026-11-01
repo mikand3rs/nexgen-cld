@@ -12,6 +12,9 @@ set -euo pipefail
 set -o pipefail
 cd "$(dirname "$0")/.."
 
+# Stage B: session auth (replaces X-Tenant-ID demo header).
+JAR=$(bash scripts/test-auth-helper.sh) || exit 1
+
 set -a
 [ -f .env ] && . ./.env
 set +a
@@ -55,11 +58,9 @@ docker compose exec -T -e "PGPASSWORD=$(cat secrets/postgres_password.txt)" post
    ON CONFLICT (id) DO NOTHING;" > /dev/null
 
 # Distinct content per tenant so cross-tenant leakage is detectable.
-RA="$(curl -s -X POST http://bmos.localhost/documents \
-  -H "X-Tenant-ID: $TENANT_A" -H 'Content-Type: application/json' \
+RA="$(curl -s -X POST http://bmos.localhost/documents \ -b "$JAR" -H 'Content-Type: application/json' \
   -d '{"title":"A doc","chunks":["alpha bravo charlie tenant A secret recipe","delta echo foxtrot tenant A internal notes"]}')"
-RB="$(curl -s -X POST http://bmos.localhost/documents \
-  -H "X-Tenant-ID: $TENANT_B" -H 'Content-Type: application/json' \
+RB="$(curl -s -X POST http://bmos.localhost/documents \ -b "$JAR" -H 'Content-Type: application/json' \
   -d '{"title":"B doc","chunks":["zulu yankee xray tenant B confidential plan","whiskey victor uniform tenant B private memo"]}')"
 DA="$(jget "$RA" document_id)"; DBB="$(jget "$RB" document_id)"
 check "setup: doc A created" "36" "${#DA}"
@@ -75,8 +76,7 @@ check "index: 4 points (2 chunks x 2 tenants)" "4" "$COUNT"
 
 echo "--- gate: tenant-filtered search ---"
 # Search for A's distinctive content as tenant A.
-SA="$(curl -s -X POST http://bmos.localhost/search \
-  -H "X-Tenant-ID: $TENANT_A" -H 'Content-Type: application/json' \
+SA="$(curl -s -X POST http://bmos.localhost/search \ -b "$JAR" -H 'Content-Type: application/json' \
   -d '{"query":"alpha bravo charlie secret recipe","limit":5}')"
 # Every returned hit must belong to tenant A (server-generated filter).
 LEAK_A="$(python3 -c "
@@ -91,8 +91,7 @@ check "search A: zero tenant-B content leaked" "0" "$LEAK_A"
 
 echo "--- gate: forged client tenant ID is ignored ---"
 # Attacker passes tenant B in the body; the server must still filter by A.
-SF="$(curl -s -X POST http://bmos.localhost/search \
-  -H "X-Tenant-ID: $TENANT_A" -H 'Content-Type: application/json' \
+SF="$(curl -s -X POST http://bmos.localhost/search \ -b "$JAR" -H 'Content-Type: application/json' \
   -d "{\"query\":\"zulu yankee xray confidential plan\",\"tenant_id\":\"$TENANT_B\",\"limit\":5}")"
 LEAK_F="$(python3 -c "
 import json,sys
@@ -107,8 +106,7 @@ check "forged: zero tenant-B content leaked" "0" "$LEAK_F"
 
 echo "--- gate: cross-tenant retrieval returns no foreign points ---"
 # Search B's exact content as A: B's points must be invisible.
-SX="$(curl -s -X POST http://bmos.localhost/search \
-  -H "X-Tenant-ID: $TENANT_A" -H 'Content-Type: application/json' \
+SX="$(curl -s -X POST http://bmos.localhost/search \ -b "$JAR" -H 'Content-Type: application/json' \
   -d '{"query":"whiskey victor uniform private memo","limit":5}')"
 LEAK_X="$(python3 -c "
 import json,sys
@@ -130,8 +128,7 @@ PG_AFTER="$(docker compose exec -T -e "PGPASSWORD=$(cat secrets/postgres_passwor
 check "rebuild: point count restored" "$COUNT" "$COUNT_AFTER"
 check "rebuild: PostgreSQL chunks untouched" "$PG_BEFORE" "$PG_AFTER"
 # Search still works after rebuild.
-SR="$(curl -s -X POST http://bmos.localhost/search \
-  -H "X-Tenant-ID: $TENANT_A" -H 'Content-Type: application/json' \
+SR="$(curl -s -X POST http://bmos.localhost/search \ -b "$JAR" -H 'Content-Type: application/json' \
   -d '{"query":"alpha bravo charlie secret recipe","limit":5}')"
 GOT_R="$(jget "$SR" results | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")"
 check "rebuild: search works after rebuild" "true" "$([ "$GOT_R" -gt 0 ] && echo true || echo false)"

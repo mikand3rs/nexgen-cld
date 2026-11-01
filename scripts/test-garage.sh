@@ -15,6 +15,9 @@ set -euo pipefail
 set -o pipefail
 cd "$(dirname "$0")/.."
 
+# Stage B: session auth (replaces X-Tenant-ID demo header).
+JAR=$(bash scripts/test-auth-helper.sh) || exit 1
+
 set -a
 [ -f .env ] && . ./.env
 set +a
@@ -70,8 +73,7 @@ docker compose exec -T -e "PGPASSWORD=$(cat secrets/postgres_password.txt)" post
    ON CONFLICT (id) DO NOTHING;" > /dev/null
 
 echo "--- upload flow: register → PUT bytes → complete ---"
-ROBJ="$(curl -s -X POST http://bmos.localhost/objects \
-  -H "X-Tenant-ID: $TENANT_A" -H 'Content-Type: application/json' \
+ROBJ="$(curl -s -X POST http://bmos.localhost/objects \ -b "$JAR" -H 'Content-Type: application/json' \
   -d '{"filename":"hello.txt","media_type":"text/plain"}')"
 OID="$(jget "$ROBJ" id)"
 PUTURL="$(jget "$ROBJ" upload_url)"
@@ -93,13 +95,11 @@ docker run --rm --network nexgen-bmos_backend \
 PUTCODE="$(cat /tmp/bmos-put-code.txt)"
 check "PUT bytes to presigned URL" "200" "$PUTCODE"
 
-RCOMPLETE="$(curl -s -X POST "http://bmos.localhost/objects/${OID}/complete" \
-  -H "X-Tenant-ID: $TENANT_A")"
+RCOMPLETE="$(curl -s -X POST "http://bmos.localhost/objects/${OID}/complete" \ -b "$JAR")"
 check "complete: state uploaded" "uploaded" "$(jget "$RCOMPLETE" lifecycle_state)"
 
 echo "--- download flow: presigned GET → bytes match ---"
-RDL="$(curl -s "http://bmos.localhost/objects/${OID}/download" \
-  -H "X-Tenant-ID: $TENANT_A")"
+RDL="$(curl -s "http://bmos.localhost/objects/${OID}/download" \ -b "$JAR")"
 GETURL="$(jget "$RDL" download_url)"
 check "download: presigned GET url" "true" "$([ -n "$GETURL" ] && echo true || echo false)"
 # GET bytes via backend-network curl, compare.
@@ -112,12 +112,11 @@ GOTDATA="$(cat /tmp/bmos-dl.txt)"
 check "download: bytes match upload" "$TESTDATA" "$GOTDATA"
 
 echo "--- gate: tenant B cannot retrieve tenant A's object ---"
-RB="$(curl -s "http://bmos.localhost/objects/${OID}/download" \
-  -H "X-Tenant-ID: $TENANT_B" -w "\n%{http_code}" )"
+RB="$(curl -s "http://bmos.localhost/objects/${OID}/download" \ -b "$JAR" -w "\n%{http_code}" )"
 BCODE="$(echo "$RB" | tail -1)"
 check "cross-tenant download: 404" "404" "$BCODE"
 # B's object list must not include A's object.
-RLIST_B="$(curl -s http://bmos.localhost/objects -H "X-Tenant-ID: $TENANT_B")"
+RLIST_B="$(curl -s http://bmos.localhost/objects -b "$JAR")"
 LEAK="$(python3 -c "
 import json,sys
 d = json.load(sys.stdin)
@@ -147,7 +146,7 @@ MCNT="$(docker run --rm -v nexgen-bmos_garage_data:/data alpine sh -c 'find /dat
 check "backup: MinIO volume holds object bytes" "true" "$([ "$MCNT" -gt 0 ] && echo true || echo false)"
 
 echo "--- cleanup ---"
-curl -s -X DELETE "http://bmos.localhost/objects/${OID}" -H "X-Tenant-ID: $TENANT_A" > /dev/null
+curl -s -X DELETE "http://bmos.localhost/objects/${OID}" -b "$JAR" > /dev/null
 rm -f /tmp/bmos-test-upload.txt /tmp/bmos-dl.txt /tmp/bmos-put-code.txt /tmp/bmos-objects.sql
 
 echo "--- result: $pass passed, $fail failed ---"

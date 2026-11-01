@@ -119,6 +119,7 @@ function backoff_seconds(int $attempts): int
 
 $workerId = (gethostname() ?: 'worker') . ':' . getmypid();
 $pdo = null;
+$reaperCounter = 0;
 log_line("starting (worker id {$workerId})");
 
 while (!$shutdown) {
@@ -128,6 +129,18 @@ while (!$shutdown) {
             $role = $pdo->query('SELECT current_user')->fetchColumn();
             log_line("connected as {$role}");
         }
+
+        // Reaper: recover jobs from dead workers (expired leases).
+        // Runs every ~10 loop iterations, not every loop.
+        if (++$reaperCounter >= 10) {
+            $reaperCounter = 0;
+            $reaped = $pdo->query("SELECT * FROM app.reap_expired_leases()")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($reaped as $r) {
+                $state = $r['reaped_dead'] ? 'dead-letter' : "pending (attempt {$r['reaped_attempts']})";
+                log_line("reaper: recovered job {$r['reaped_id']} → {$state}");
+            }
+        }
+
         $pdo->beginTransaction();
 
         // Step 1 — peek with NO tenant context (discovery policy only).
@@ -177,13 +190,22 @@ while (!$shutdown) {
         $pdo->prepare(
             "UPDATE app.outbox_jobs
              SET status = 'claimed', claimed_by = :w, claimed_at = now(),
+                 lease_expires_at = now() + make_interval(secs => 60),
+                 last_heartbeat_at = now(), worker_id = :w,
                  attempts = attempts + 1
              WHERE id = :id"
         )->execute([':w' => $workerId, ':id' => $jobId]);
 
         // Step 4 — perform the work (tenant-scoped by RLS).
+        // Heartbeat: renew the lease so long jobs aren't reaped.
+        // (Current handlers are fast; this is the hook for slow ones.)
         $job['attempts'] = (int) $job['attempts'] + 1; // claim already incremented it
         $outcome = handle_job($pdo, $job);
+        $pdo->prepare(
+            "UPDATE app.outbox_jobs SET last_heartbeat_at = now(),
+             lease_expires_at = now() + make_interval(secs => 60)
+             WHERE id = :id"
+        )->execute([':id' => $jobId]);
 
         // Step 5 — record the result.
         if ($outcome['ok']) {

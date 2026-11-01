@@ -10,6 +10,9 @@ set -euo pipefail
 set -o pipefail
 cd "$(dirname "$0")/.."
 
+# Stage B: session auth (replaces X-Tenant-ID demo header).
+JAR=$(bash scripts/test-auth-helper.sh) || exit 1
+
 set -a
 [ -f .env ] && . ./.env
 set +a
@@ -109,8 +112,7 @@ super "DELETE FROM app.outbox_jobs WHERE id = '$T2_JOB';" > /dev/null
 echo "--- test 3: retried/duplicate enqueues are idempotent ---"
 IKEY="test3-$(date +%s)"
 enqueue() {
-  curl -s -X POST http://bmos.localhost/jobs/enqueue \
-    -H "X-Tenant-ID: $TENANT_A" -H 'Content-Type: application/json' \
+  curl -s -X POST http://bmos.localhost/jobs/enqueue \ -b "$JAR" -H 'Content-Type: application/json' \
     -d "{\"job_type\":\"task.created\",\"title\":\"t3-task\",\"idempotency_key\":\"$IKEY\"}"
 }
 R1="$(enqueue)"; R2="$(enqueue)"
@@ -123,8 +125,7 @@ check "3c. exactly one job row for the key" "1" \
 check "3d. exactly one task row (no orphan from the duplicate)" "1" \
   "$(app "SET app.current_tenant = '$TENANT_A'; SELECT count(*) FROM app.tasks WHERE title = 't3-task';")"
 # Same key under a DIFFERENT tenant must not collide (keys are per-tenant).
-R3="$(curl -s -X POST http://bmos.localhost/jobs/enqueue \
-  -H "X-Tenant-ID: $TENANT_B" -H 'Content-Type: application/json' \
+R3="$(curl -s -X POST http://bmos.localhost/jobs/enqueue \ -b "$JAR" -H 'Content-Type: application/json' \
   -d "{\"job_type\":\"task.created\",\"title\":\"t3-b-task\",\"idempotency_key\":\"$IKEY\"}")"
 J3="$(jget "$R3" job_id)"; D3="$(jget "$R3" deduplicated)"
 if [ "$J3" != "$J1" ] && [ "$D3" = "False" ]; then
@@ -160,8 +161,7 @@ fi
 echo "--- test 5: end-to-end — worker picks up and completes a job ---"
 docker compose up -d worker > /dev/null
 EKEY="test5-$(date +%s)"
-RE="$(curl -s -X POST http://bmos.localhost/jobs/enqueue \
-  -H "X-Tenant-ID: $TENANT_A" -H 'Content-Type: application/json' \
+RE="$(curl -s -X POST http://bmos.localhost/jobs/enqueue \ -b "$JAR" -H 'Content-Type: application/json' \
   -d "{\"job_type\":\"task.created\",\"title\":\"t5-task\",\"idempotency_key\":\"$EKEY\"}")"
 EJ="$(jget "$RE" job_id)"
 status=""; tries=0
@@ -186,8 +186,7 @@ except Exception:
 
 echo "--- test 6: retry — a failing job is retried and then succeeds ---"
 FKEY="test6-$(date +%s)"
-RF="$(curl -s -X POST http://bmos.localhost/jobs/enqueue \
-  -H "X-Tenant-ID: $TENANT_A" -H 'Content-Type: application/json' \
+RF="$(curl -s -X POST http://bmos.localhost/jobs/enqueue \ -b "$JAR" -H 'Content-Type: application/json' \
   -d "{\"job_type\":\"demo.fail_once\",\"title\":\"t6-task\",\"idempotency_key\":\"$FKEY\"}")"
 FJ="$(jget "$RF" job_id)"
 status=""; tries=0
