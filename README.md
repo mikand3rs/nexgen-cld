@@ -1,7 +1,7 @@
 # NexGen CLD v4 (BMOS 3.2) — Multi-tenant Business OS
 
 **PHP 8.4 + PostgreSQL 17 + Traefik + Nginx**, with Qdrant (vector search),
-Garage (S3-compatible objects), Lemonade (local GPU AI), n8n (workflows),
+Garage (S3-compatible objects), pluggable AI (Lemonade local GPU, or Mistral/DeepSeek/OpenAI/Groq/Ollama), n8n (workflows),
 Redis (optional queue), and a locked-down agent sandbox.
 
 **Architecture:** PHP-native, server-rendered. PHP owns business logic,
@@ -31,7 +31,7 @@ The web UI is Tailwind CSS + HTMX + Alpine.js in a dark "Figr Identity" aestheti
 | Outbox + worker (17/17) | ✅ Implemented, integration tested |
 | Qdrant vector search (11/11) | ✅ Implemented, integration tested |
 | Garage S3 objects (12/12) | ✅ Implemented, integration tested |
-| Lemonade AI chat (6/6) | ✅ Implemented, integration tested |
+| AI chat via provider abstraction (6/6) | ✅ Implemented, integration tested |
 | n8n workflows (4/4) | ✅ Implemented, integration tested |
 | Agent sandbox (7/7) | ✅ Implemented, integration tested |
 | Dark web UI (dashboard, tasks, AI chat, docs, files, workflows, tenants, health) | ✅ Implemented |
@@ -121,6 +121,8 @@ bash scripts/test-outbox.sh     # 17 passed — transactional outbox
 bash scripts/test-qdrant.sh     # 11 passed — vector search, tenant-filtered
 bash scripts/test-garage.sh     # 12 passed — S3 objects, presigned URLs
 bash scripts/test-lemonade.sh   # 6 passed — local AI chat
+bash scripts/test-ai-providers.sh # 25 passed — provider abstraction (offline)
+bash scripts/test-crm.sh        # CRM 1.0 — leads/accounts/contacts/notes/activities + RLS
 bash scripts/test-n8n.sh        # 4 passed — workflow integration
 bash scripts/test-auth.sh       # 6 passed — session auth, API keys
 bash scripts/test-agents.sh     # 7 passed — sandbox isolation
@@ -170,12 +172,13 @@ bash scripts/test-tls.sh             # HTTPS, redirect, cert validity
 ## Web UI
 
 Server-rendered PHP + Tailwind (CDN) + HTMX + Alpine.js, dark theme.
-Sidebar: Command Center / Operations / AI Workforce / Automation / Administration.
+Sidebar: Command Center / Operations / CRM / AI Workforce / Automation / Administration.
 
 - `/login` — sign in (bcrypt sessions)
 - `/dashboard` — stats, recent tasks, system status
 - `/tasks` — task management (HTMX)
-- `/ai-ui` — AI chat (Lemonade, local GPU)
+- `/crm` — CRM 1.0: leads, companies, contacts, notes, activities, search (see docs/crm.md)
+- `/ai-ui` — AI chat (configurable provider; see docs/ai-providers.md)
 - `/documents` — document search
 - `/objects-ui` — file upload/download (presigned URLs)
 - `/workflows` — n8n integration dashboard
@@ -250,6 +253,16 @@ PHP after BMOS authorization. Garage S3 API is backend-only, no published ports.
 Stays on the Windows host (GPU), not a container. PHP reaches it via
 `LEMONADE_URL`. No DB credentials to Lemonade; pure inference.
 Qwen3.5 requests set `chat_template_kwargs.enable_thinking=false`.
+</details>
+
+<details>
+<summary>Phase 17 — AI provider abstraction</summary>
+
+`AI_PROVIDER` selects the inference backend: `lemonade` (default, local),
+`mistral`, `deepseek`, `openai`, `groq`, `ollama`, or `custom` (any
+OpenAI-compatible endpoint). API keys via env or `<NAME>_FILE` Docker
+secret. `/ai/health` exposes provider/model/endpoint, never keys.
+Full guide: `docs/ai-providers.md`. Tests: `scripts/test-ai-providers.sh`.
 </details>
 
 <details>

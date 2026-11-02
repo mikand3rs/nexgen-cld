@@ -21,6 +21,7 @@ require_once __DIR__ . '/../src/Qdrant.php';
 require_once __DIR__ . '/../src/Embeddings.php';
 require_once __DIR__ . '/../src/S3Client.php';
 require_once __DIR__ . '/../src/Lemonade.php';
+require_once __DIR__ . '/../src/Crm.php';
 
 $version = '3.2-dev';
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
@@ -671,36 +672,37 @@ if ($path === '/ready') {
 }
 
 // Phase 8: Lemonade (Windows-hosted) endpoints.
-// Lemonade is inference-only: no DB credentials, no tenant data leaves PHP
-// except the prompt itself. Tenant scoping stays in PHP (verified session
-// header validated as UUID, same stand-in as other endpoints).
+// Phase 17: provider abstraction — AI_PROVIDER selects the backend
+// (lemonade | mistral | deepseek | openai | groq | ollama | custom).
+// The provider is inference-only: no DB credentials, no tenant data leaves
+// PHP except the prompt itself. Tenant scoping stays in PHP.
 
-// GET /ai/health → is Lemonade reachable? lists models (no auth needed).
+// GET /ai/health → is the configured AI provider reachable? lists models (no auth needed).
 if ($path === '/ai/health' && $method === 'GET') {
     try {
-        $lem = new Lemonade();
-        $models = $lem->models();
+        $provider = ProviderFactory::create();
+        $models = $provider->models();
         $ids = [];
         foreach (($models['data'] ?? []) as $m) {
             if (isset($m['id'])) {
                 $ids[] = $m['id'];
             }
         }
-        echo json_encode([
-            'status' => 'ok',
-            'lemonade_url' => $lem->baseUrl(),
-            'models' => $ids,
-        ]);
+        echo json_encode(array_merge(
+            ['status' => 'ok'],
+            $provider->describe(),
+            ['models' => $ids]
+        ));
     } catch (Throwable $e) {
         http_response_code(503);
-        echo json_encode(['status' => 'degraded', 'error' => 'lemonade unreachable']);
+        echo json_encode(['status' => 'degraded', 'error' => 'ai provider unreachable']);
     }
     return;
 }
 
 // POST /ai/chat → {messages:[{role,content},...]} → {content}
-// Tenant header is validated (demo auth stand-in); the tenant id is NOT
-// sent to Lemonade — it only scopes which PHP caller may use the endpoint.
+// Session auth (Stage A); the tenant id is NOT sent to the AI provider —
+// it only scopes which PHP caller may use the endpoint.
 if ($path === '/ai/chat' && $method === 'POST') {
     $tenantId = Auth::requireTenant();
     $body = json_decode((string) file_get_contents('php://input'), true);
@@ -730,9 +732,9 @@ if ($path === '/ai/chat' && $method === 'POST') {
             echo json_encode(['error' => 'tenant not found']);
             return;
         }
-        $lem = new Lemonade();
-        $content = $lem->chat($messages);
-        echo json_encode(['content' => $content, 'model' => getenv('LEMONADE_MODEL') ?: 'Qwen3.5-2B-GGUF']);
+        $provider = ProviderFactory::create();
+        $content = $provider->chat($messages);
+        echo json_encode(['content' => $content, 'model' => $provider->defaultModel(), 'provider' => $provider->name()]);
     } catch (Throwable $e) {
         http_response_code(503);
         echo json_encode(['error' => 'ai chat failed']);
@@ -844,9 +846,9 @@ if ($path === '/dashboard/system' && $method === 'GET') {
     $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     $services['Garage'] = ($code === 403 || $code === 400 || $code === 200);
-    // Lemonade.
-    try { (new Lemonade())->models(); $services['Lemonade'] = true; }
-    catch (Throwable $e) { $services['Lemonade'] = false; }
+    // AI provider (Phase 17: was Lemonade-only).
+    try { ProviderFactory::create()->models(); $services['AI'] = true; }
+    catch (Throwable $e) { $services['AI'] = false; }
 
     echo '<ul class="space-y-2 text-sm">';
     foreach ($services as $name => $ok) {
@@ -1006,6 +1008,8 @@ if ($path === '/ai-ui' && $method === 'GET') {
     header('Content-Type: text/html; charset=utf-8');
     $title = 'AI Chat';
     $active = 'ai';
+    // Phase 17: show which provider backs the chat page (never throws).
+    $ai_provider_name = ProviderFactory::describeSafe()['provider'] ?? 'ai';
     ob_start();
     require __DIR__ . '/../views/ai-chat.php';
     $content = ob_get_clean();
@@ -1279,9 +1283,9 @@ if ($path === '/health-ui/services' && $method === 'GET') {
     $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     $checks['Garage'] = ($code === 403 || $code === 400 || $code === 200);
-    // Lemonade.
-    try { (new Lemonade())->models(); $checks['Lemonade'] = true; }
-    catch (Throwable $e) { $checks['Lemonade'] = false; }
+    // AI provider (Phase 17: was Lemonade-only).
+    try { ProviderFactory::create()->models(); $checks['AI'] = true; }
+    catch (Throwable $e) { $checks['AI'] = false; }
     // n8n (if running): healthz.
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'http://n8n:5678/healthz');
@@ -1313,6 +1317,12 @@ if ($path === '/health-ui/database' && $method === 'GET') {
     } catch (Throwable $e) {
         echo '<div class="text-sm text-red-400">DB unreachable.</div>';
     }
+    return;
+}
+
+// CRM 1.0 — native customer & sales module (routes in app/crm-routes.php).
+if ($path === '/crm' || str_starts_with($path, '/crm/')) {
+    require __DIR__ . '/../crm-routes.php';
     return;
 }
 

@@ -11,6 +11,13 @@ $sections = [
         'documents' => ['Documents', '/documents', '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/>'],
         'objects'   => ['Files', '/objects-ui', '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>'],
     ],
+    'CRM' => [
+        'crm'            => ['Overview', '/crm', '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'],
+        'crm-leads'      => ['Leads', '/crm/leads', '<path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/>'],
+        'crm-accounts'   => ['Companies', '/crm/accounts', '<path d="M3 21h18M5 21V7l7-4 7 4v14"/><path d="M9 21v-4h6v4"/>'],
+        'crm-contacts'   => ['Contacts', '/crm/contacts', '<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>'],
+        'crm-activities' => ['Activities', '/crm/activities', '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'],
+    ],
     'AI WORKFORCE' => [
         'ai' => ['AI Chat', '/ai-ui', '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/>'],
     ],

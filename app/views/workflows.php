@@ -38,7 +38,7 @@
         <tbody class="divide-y divide-gray-100">
           <tr><td class="py-2 pr-4 font-mono">POST</td><td class="py-2 pr-4 font-mono">/jobs/enqueue</td><td class="py-2">Enqueue a background job (task.created, document.index)</td></tr>
           <tr><td class="py-2 pr-4 font-mono">POST</td><td class="py-2 pr-4 font-mono">/objects</td><td class="py-2">Register a file upload (get presigned PUT URL)</td></tr>
-          <tr><td class="py-2 pr-4 font-mono">POST</td><td class="py-2 pr-4 font-mono">/ai/chat</td><td class="py-2">Ask the local AI (Lemonade)</td></tr>
+          <tr><td class="py-2 pr-4 font-mono">POST</td><td class="py-2 pr-4 font-mono">/ai/chat</td><td class="py-2">Ask the AI (configured provider)</td></tr>
           <tr><td class="py-2 pr-4 font-mono">POST</td><td class="py-2 pr-4 font-mono">/search</td><td class="py-2">Vector + keyword document search</td></tr>
           <tr><td class="py-2 pr-4 font-mono">GET</td><td class="py-2 pr-4 font-mono">/ready</td><td class="py-2">Health check (DB as bmos_app)</td></tr>
         </tbody>

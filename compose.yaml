@@ -81,6 +81,16 @@ services:
       # never hardcode it here; override via .env if needed.
       LEMONADE_URL: ${LEMONADE_URL:-http://host.docker.internal:13305}
       LEMONADE_MODEL: ${LEMONADE_MODEL:-Qwen3.5-2B-GGUF}
+      # Phase 17: AI provider abstraction. Default is lemonade (local).
+      # Switch backends with one variable:
+      #   AI_PROVIDER: mistral | deepseek | openai | groq | ollama | custom
+      # API keys come from Docker secrets (preferred) or env — never commit them.
+      # To wire one: uncomment the secret below AND the matching _FILE line here.
+      AI_PROVIDER: ${AI_PROVIDER:-lemonade}
+      # MISTRAL_API_KEY_FILE: /run/secrets/mistral_api_key
+      # DEEPSEEK_API_KEY_FILE: /run/secrets/deepseek_api_key
+      # OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+      # GROQ_API_KEY_FILE: /run/secrets/groq_api_key
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: bmos_chunks
       QDRANT_VECTOR_SIZE: "384"
@@ -88,6 +98,8 @@ services:
       - app_password
       - garage_app_key_id
       - garage_app_secret
+      # Phase 17: uncomment to attach an AI provider API key secret.
+      # - mistral_api_key
     volumes:
       - ./app:/var/www/html:ro
       - ./scripts:/var/www/html/scripts:ro
@@ -373,3 +385,14 @@ secrets:
     file: ./secrets/n8n_db_password.txt
   n8n_encryption_key:
     file: ./secrets/n8n_encryption_key.txt
+  # Phase 17: AI provider API keys. Uncomment one to use it, then set the
+  # matching <NAME>_API_KEY_FILE env var on the php service (see above).
+  # The secret file itself (e.g. secrets/mistral_api_key.txt) is gitignored.
+  # mistral_api_key:
+  #   file: ./secrets/mistral_api_key.txt
+  # deepseek_api_key:
+  #   file: ./secrets/deepseek_api_key.txt
+  # openai_api_key:
+  #   file: ./secrets/openai_api_key.txt
+  # groq_api_key:
+  #   file: ./secrets/groq_api_key.txt

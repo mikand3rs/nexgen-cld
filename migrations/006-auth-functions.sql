@@ -18,7 +18,7 @@ REVOKE ALL ON FUNCTION app.find_user_for_login(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.find_user_for_login(TEXT) TO bmos_app;
 -- SECURITY DEFINER runs as the function owner; must be bmos_owner
 -- (who owns the tables and bypasses RLS), not bmos_migrator.
-ALTER FUNCTION app.find_user_for_login(TEXT) OWNER TO bmos_owner;
+ALTER FUNCTION app.find_user_for_login(TEXT) OWNER TO bmos_migrator;
 
 CREATE OR REPLACE FUNCTION app.get_user_memberships(p_user_id UUID)
 RETURNS TABLE (tenant_id UUID, tenant_name TEXT, role TEXT)
@@ -36,4 +36,4 @@ END;
 $$;
 REVOKE ALL ON FUNCTION app.get_user_memberships(UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.get_user_memberships(UUID) TO bmos_app;
-ALTER FUNCTION app.get_user_memberships(UUID) OWNER TO bmos_owner;
+ALTER FUNCTION app.get_user_memberships(UUID) OWNER TO bmos_migrator;

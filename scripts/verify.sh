@@ -79,9 +79,13 @@ run_suite "outbox" "scripts/test-outbox.sh"
 run_suite "qdrant" "scripts/test-qdrant.sh"
 run_suite "garage" "scripts/test-garage.sh"
 run_suite "lemonade" "scripts/test-lemonade.sh"
+run_suite "ai-providers" "scripts/test-ai-providers.sh"
 
 # Remediation: worker crash (process-level)
 run_suite "worker-crash" "scripts/test-worker-crash.sh"
+
+# CRM 1.0: native customer & sales module
+run_suite "crm" "scripts/test-crm.sh"
 
 echo "=============================================="
 echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"

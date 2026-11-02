@@ -6,7 +6,7 @@
      x-data="{ messages: [], input: '', sending: false }">
   <div class="px-5 py-3 border-b border-zinc-800">
     <h2 class="font-semibold">AI Chat</h2>
-    <p class="text-xs text-zinc-500">Powered by Lemonade (local GPU) via the BMOS API. Tenant-scoped.</p>
+    <p class="text-xs text-zinc-500">Powered by <?= htmlspecialchars($ai_provider_name ?? 'the configured AI provider') ?> via the BMOS API. Tenant-scoped.</p>
   </div>
   <div id="chat-log" class="flex-1 overflow-y-auto p-5 space-y-3">
     <template x-for="(m, i) in messages" :key="i">
