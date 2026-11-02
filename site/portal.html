@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docs portal — NexGen CLD docs</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#08080c; color:#e8e8ee; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; margin:0; }
+  .wrap { display:flex; min-height:100vh; }
+  nav { width:264px; flex-shrink:0; border-right:1px solid #1c1c26; padding:24px 16px; position:sticky; top:0; height:100vh; overflow:auto; box-sizing:border-box; }
+  nav h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#8b8b9e; margin:0 0 12px 8px; }
+  nav a { display:block; padding:8px 12px; border-radius:8px; color:#c9c9d8; text-decoration:none; font-size:14px; }
+  nav a:hover { background:#14141c; color:#fff; }
+  main { flex:1; max-width:860px; padding:40px 48px; }
+  h1,h2,h3 { color:#fff; }
+  a { color:#67e8f9; }
+  code { background:#14141c; padding:2px 6px; border-radius:6px; font-size:.9em; }
+  pre { background:#101016; border:1px solid #1c1c26; border-radius:12px; padding:16px; overflow:auto; }
+  pre code { background:none; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:16px 0; }
+  th,td { border:1px solid #262633; padding:8px 12px; text-align:left; font-size:14px; }
+  th { background:#101016; }
+  img { max-width:100%; border-radius:12px; }
+  blockquote { border-left:3px solid #67e8f9; margin:16px 0; padding:4px 16px; color:#b9b9cc; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <h2>NexGen CLD docs</h2>
+        <a href="index.html">Overview</a>
+        <a href="ai-providers.html">BMOS 3.2 — AI Providers (Phase 17)</a>
+        <a href="crm.html">BMOS CRM 1.0 — native customer &amp; sales module</a>
+        <a href="github-metadata.html">GitHub repo metadata</a>
+        <a href="portal.html">Docs portal</a>
+        <a href="preline-ui-analysis.html">Board guidelines — UI web access for BMOS (Preline template analysis)</a>
+        <a href="secrets.html">Secrets</a>
+        <a href="tls.html">TLS / HTTPS (Stage B, opt-in)</a>
+  </nav>
+  <main>
+<h1 id="docs-portal">Docs portal</h1>
+<p>The public documentation portal is a static site generated from the
+Markdown files already in this repo (<code>README.md</code> +
+<code>docs/*.md</code>). No framework, no build service — one script,
+plain HTML/CSS in the BMOS dark theme.</p>
+<h2 id="build">Build</h2>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/projects/nexgen-bmos</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/build-docs.sh</span></code></pre></div>
+<p>Needs a Markdown converter: <code>pandoc</code> or Python
+<code>markdown</code>. The script tells you which to install if neither
+is present:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> apt install pandoc</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co"># or: pip install markdown</span></span></code></pre></div>
+<p>Output lands in <code>site/</code> (gitignored — it’s generated,
+never committed to main).</p>
+<h2 id="preview">Preview</h2>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/projects/nexgen-bmos/site</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-m</span> http.server 8080</span></code></pre></div>
+<p>Then open http://localhost:8080.</p>
+<h2 id="publish-github-pages">Publish (GitHub Pages)</h2>
+<p>Rebuild the site, then push it to the <code>gh-pages</code>
+branch:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/projects/nexgen-bmos</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/build-docs.sh</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> checkout <span class="at">-b</span> gh-pages</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> add <span class="at">-f</span> site/</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> commit <span class="at">-m</span> <span class="st">&quot;docs portal&quot;</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> push origin gh-pages <span class="at">--force</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> checkout main</span></code></pre></div>
+<p>Then in the GitHub repo: <strong>Settings → Pages → Deploy from a
+branch → <code>gh-pages</code> / <code>/ (root)</code></strong>. Your
+docs will be live at
+<code>https://mikand3rs.github.io/nexgen-cld/</code> within a minute or
+two.</p>
+<p>Rebuilding later is the same sequence — the <code>--force</code> push
+replaces the old site. (Alternative: drag the <code>site/</code> folder
+into Netlify Drop or Cloudflare Pages for a URL without touching
+git.)</p>
+<h2 id="adding-docs">Adding docs</h2>
+<p>Write a new <code>docs/&lt;name&gt;.md</code> file with a
+<code># Title</code> first line, rebuild, and it appears in the sidebar
+automatically. Keep image references as
+<code>screenshots/&lt;file&gt;</code> inside <code>docs/</code>; the
+build copies them along.</p>
+
+  </main>
+</div>
+</body>
+</html>

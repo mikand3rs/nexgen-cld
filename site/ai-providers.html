@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BMOS 3.2 — AI Providers (Phase 17) — NexGen CLD docs</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#08080c; color:#e8e8ee; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; margin:0; }
+  .wrap { display:flex; min-height:100vh; }
+  nav { width:264px; flex-shrink:0; border-right:1px solid #1c1c26; padding:24px 16px; position:sticky; top:0; height:100vh; overflow:auto; box-sizing:border-box; }
+  nav h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#8b8b9e; margin:0 0 12px 8px; }
+  nav a { display:block; padding:8px 12px; border-radius:8px; color:#c9c9d8; text-decoration:none; font-size:14px; }
+  nav a:hover { background:#14141c; color:#fff; }
+  main { flex:1; max-width:860px; padding:40px 48px; }
+  h1,h2,h3 { color:#fff; }
+  a { color:#67e8f9; }
+  code { background:#14141c; padding:2px 6px; border-radius:6px; font-size:.9em; }
+  pre { background:#101016; border:1px solid #1c1c26; border-radius:12px; padding:16px; overflow:auto; }
+  pre code { background:none; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:16px 0; }
+  th,td { border:1px solid #262633; padding:8px 12px; text-align:left; font-size:14px; }
+  th { background:#101016; }
+  img { max-width:100%; border-radius:12px; }
+  blockquote { border-left:3px solid #67e8f9; margin:16px 0; padding:4px 16px; color:#b9b9cc; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <h2>NexGen CLD docs</h2>
+        <a href="index.html">Overview</a>
+        <a href="ai-providers.html">BMOS 3.2 — AI Providers (Phase 17)</a>
+        <a href="crm.html">BMOS CRM 1.0 — native customer &amp; sales module</a>
+        <a href="github-metadata.html">GitHub repo metadata</a>
+        <a href="portal.html">Docs portal</a>
+        <a href="preline-ui-analysis.html">Board guidelines — UI web access for BMOS (Preline template analysis)</a>
+        <a href="secrets.html">Secrets</a>
+        <a href="tls.html">TLS / HTTPS (Stage B, opt-in)</a>
+  </nav>
+  <main>
+<h1 id="bmos-3.2-ai-providers-phase-17">BMOS 3.2 — AI Providers (Phase
+17)</h1>
+<p>One env var, <code>AI_PROVIDER</code>, selects the inference backend.
+Everything else — auth, tenant scoping, persistence — stays in PHP. No
+provider ever receives DB credentials or BMOS secrets; only the prompt
+text.</p>
+<h2 id="backends">Backends</h2>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th><code>AI_PROVIDER</code></th>
+<th>Backend</th>
+<th>Needs</th>
+<th>Default model</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lemonade</code> (default)</td>
+<td>Lemonade Server on your Windows host (GPU)</td>
+<td><code>LEMONADE_URL</code>, <code>LEMONADE_MODEL</code></td>
+<td><code>Qwen3.5-2B-GGUF</code></td>
+</tr>
+<tr>
+<td><code>mistral</code></td>
+<td>Mistral La Plateforme API</td>
+<td><code>MISTRAL_API_KEY</code></td>
+<td><code>mistral-large-latest</code></td>
+</tr>
+<tr>
+<td><code>deepseek</code></td>
+<td>DeepSeek API</td>
+<td><code>DEEPSEEK_API_KEY</code></td>
+<td><code>deepseek-flash</code></td>
+</tr>
+<tr>
+<td><code>openai</code></td>
+<td>OpenAI API</td>
+<td><code>OPENAI_API_KEY</code></td>
+<td><code>gpt-6-luna</code></td>
+</tr>
+<tr>
+<td><code>groq</code></td>
+<td>Groq API (fast)</td>
+<td><code>GROQ_API_KEY</code></td>
+<td><code>llama-3.3-70b-versatile</code></td>
+</tr>
+<tr>
+<td><code>ollama</code></td>
+<td>Remote Ollama (LAN, Cloud Run GPU, …)</td>
+<td><code>OLLAMA_URL</code>, <code>OLLAMA_MODEL</code></td>
+<td>— (required)</td>
+</tr>
+<tr>
+<td><code>custom</code></td>
+<td>Any OpenAI-compatible endpoint</td>
+<td><code>AI_API_URL</code>, <code>AI_MODEL</code></td>
+<td>— (required)</td>
+</tr>
+</tbody>
+</table>
+<p>Override any default model: <code>MISTRAL_MODEL=…</code>,
+<code>DEEPSEEK_MODEL=…</code>, <code>OPENAI_MODEL=…</code>,
+<code>GROQ_MODEL=…</code>. Model IDs change over time — if a default
+stops working, check the provider’s docs and override.</p>
+<h2 id="api-keys-env-or-docker-secret-file">API keys: env or Docker
+secret file</h2>
+<p>Preferred: a Docker secret file, so the key never sits in
+<code>env</code> output.</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="at">-n</span> <span class="st">&quot;sk-your-key&quot;</span> <span class="op">&gt;</span> secrets/deepseek_api_key.txt</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">chmod</span> 600 secrets/deepseek_api_key.txt</span></code></pre></div>
+<p>Then in <code>compose.yaml</code> (php service), uncomment:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> deepseek_api_key</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">environment</span><span class="kw">:</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">AI_PROVIDER</span><span class="kw">:</span><span class="at"> deepseek</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">DEEPSEEK_API_KEY_FILE</span><span class="kw">:</span><span class="at"> /run/secrets/deepseek_api_key</span></span></code></pre></div>
+<p>The top-level <code>secrets:</code> block already has commented
+templates for <code>mistral_api_key</code>,
+<code>deepseek_api_key</code>, <code>openai_api_key</code>,
+<code>groq_api_key</code>. Quick local override without secrets:
+<code>DEEPSEEK_API_KEY=sk-…</code> in <code>.env</code> (never commit
+<code>.env</code>).</p>
+<h2 id="cost-reality-checked-nov-2026">Cost reality (checked Nov
+2026)</h2>
+<p>At portfolio/demo scale (1–2M tokens/month), pay-per-token costs
+<strong>under $1/month</strong>. Paid tiers do <strong>not</strong>
+train on your data (that is a free-tier term). Approximate list prices
+per million tokens, input / output:</p>
+<ul>
+<li>DeepSeek Flash (off-peak): $0.15 / $0.60 — cheapest capable
+option</li>
+<li>OpenAI gpt-6-luna: $0.10 / $0.50</li>
+<li>Groq gpt-oss-20B: $0.075 / $0.30</li>
+<li>Mistral Experiment free tier: ~1B tokens/month free, but
+<strong>requires opting into data training</strong> — fine for a demo,
+not for client data.</li>
+</ul>
+<p>Self-hosted GPU only wins past ~100M+ tokens/month of sustained
+traffic. Cloud Run L4 (~$1.05/hr when running) and serverless GPUs
+(RunPod/Modal) are 10–100× more expensive at demo scale, plus cold
+starts.</p>
+<h2 id="switching">Switching</h2>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># .env</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="va">AI_PROVIDER</span><span class="op">=</span>deepseek</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="co"># DEEPSEEK_API_KEY=sk-…   # or the secret-file route above</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> compose up <span class="at">-d</span> php</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> http://bmos.localhost/ai/health   <span class="co"># → {&quot;status&quot;:&quot;ok&quot;,&quot;provider&quot;:&quot;deepseek&quot;,...}</span></span></code></pre></div>
+<p><code>/ai/health</code> shows <code>provider</code>,
+<code>model</code>, <code>endpoint</code> — never the key.
+<code>GET /ai-ui</code> labels the chat page with the active
+provider.</p>
+<h2 id="security-notes">Security notes</h2>
+<ul>
+<li><code>ProviderFactory::describe()</code> is the only thing
+<code>/ai/health</code> exposes. It is asserted key-free by
+<code>scripts/test-ai-providers.sh</code> (the <code>no-key-leak</code>
+gate runs for every backend).</li>
+<li>The old Phase 8 gate still holds: the php container env must not
+contain <code>POSTGRES_PASSWORD</code>, and inference endpoints never
+get DB credentials.</li>
+<li>Tenant scoping is unchanged: <code>POST /ai/chat</code> requires a
+session and a verified tenant; the tenant id is never sent to the
+provider.</li>
+</ul>
+<h2 id="tests">Tests</h2>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-ai-providers.sh   <span class="co"># 25 checks, all offline except the live /ai/health shape</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-lemonade.sh       <span class="co"># 6 checks — live Lemonade round-trip (default backend)</span></span></code></pre></div>
+
+  </main>
+</div>
+</body>
+</html>

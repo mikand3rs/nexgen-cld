@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overview — NexGen CLD docs</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#08080c; color:#e8e8ee; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; margin:0; }
+  .wrap { display:flex; min-height:100vh; }
+  nav { width:264px; flex-shrink:0; border-right:1px solid #1c1c26; padding:24px 16px; position:sticky; top:0; height:100vh; overflow:auto; box-sizing:border-box; }
+  nav h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#8b8b9e; margin:0 0 12px 8px; }
+  nav a { display:block; padding:8px 12px; border-radius:8px; color:#c9c9d8; text-decoration:none; font-size:14px; }
+  nav a:hover { background:#14141c; color:#fff; }
+  main { flex:1; max-width:860px; padding:40px 48px; }
+  h1,h2,h3 { color:#fff; }
+  a { color:#67e8f9; }
+  code { background:#14141c; padding:2px 6px; border-radius:6px; font-size:.9em; }
+  pre { background:#101016; border:1px solid #1c1c26; border-radius:12px; padding:16px; overflow:auto; }
+  pre code { background:none; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:16px 0; }
+  th,td { border:1px solid #262633; padding:8px 12px; text-align:left; font-size:14px; }
+  th { background:#101016; }
+  img { max-width:100%; border-radius:12px; }
+  blockquote { border-left:3px solid #67e8f9; margin:16px 0; padding:4px 16px; color:#b9b9cc; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <h2>NexGen CLD docs</h2>
+        <a href="index.html">Overview</a>
+        <a href="ai-providers.html">BMOS 3.2 — AI Providers (Phase 17)</a>
+        <a href="crm.html">BMOS CRM 1.0 — native customer &amp; sales module</a>
+        <a href="github-metadata.html">GitHub repo metadata</a>
+        <a href="portal.html">Docs portal</a>
+        <a href="preline-ui-analysis.html">Board guidelines — UI web access for BMOS (Preline template analysis)</a>
+        <a href="secrets.html">Secrets</a>
+        <a href="tls.html">TLS / HTTPS (Stage B, opt-in)</a>
+  </nav>
+  <main>
+<h1 id="nexgen-cld-v4-bmos-3.2-multi-tenant-business-os">NexGen CLD v4
+(BMOS 3.2) — Multi-tenant Business OS</h1>
+<p><strong>PHP 8.4 + PostgreSQL 17 + Traefik + Nginx</strong>, with
+Qdrant (vector search), Garage (S3-compatible objects), pluggable AI
+(Lemonade local GPU, or Mistral/DeepSeek/OpenAI/Groq/Ollama), n8n
+(workflows), Redis (optional queue), and a locked-down agent
+sandbox.</p>
+<p><strong>Architecture:</strong> PHP-native, server-rendered. PHP owns
+business logic, auth, and persistence; PostgreSQL is authoritative for
+all business state with <strong>forced row-level security</strong>
+(tenant isolation is database-enforced, not code-filtered). Qdrant and
+Garage are rebuildable derived stores. The web UI is Tailwind CSS + HTMX
++ Alpine.js in a dark “Figr Identity” aesthetic.</p>
+<p><img src="screenshots/dashboard-dark.png" alt="Dashboard" /> <img
+src="screenshots/ai-chat.png" alt="AI Chat" /> <img
+src="screenshots/system-health.png" alt="System Health" /></p>
+<h2 id="status">Status</h2>
+<table>
+<colgroup>
+<col style="width: 42%" />
+<col style="width: 57%" />
+</colgroup>
+<thead>
+<tr>
+<th>Area</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Core stack (Traefik → Nginx → PHP → Postgres)</td>
+<td>✅ Implemented, integration tested</td>
+</tr>
+<tr>
+<td>Tenant isolation (forced RLS, 9/9 tests)</td>
+<td>✅ Security verified</td>
+</tr>
+<tr>
+<td>Stage A authentication (sessions + API keys)</td>
+<td>✅ Implemented, integration tested</td>
+</tr>
+<tr>
+<td><strong>Stage B: session idle timeout (8h), API key
+expiry/revocation</strong></td>
+<td>✅ Implemented</td>
+</tr>
+<tr>
+<td><strong>Stage B: worker leases, reaper, crash recovery</strong></td>
+<td>✅ Implemented</td>
+</tr>
+<tr>
+<td><strong>Stage B: read-only FS, dropped caps,
+no-new-privs</strong></td>
+<td>✅ Implemented</td>
+</tr>
+<tr>
+<td><strong>Stage B: TLS (opt-in via docs/tls.html)</strong></td>
+<td>✅ Implemented, opt-in</td>
+</tr>
+<tr>
+<td>Transport (default)</td>
+<td>HTTP-only (:80); HTTPS via opt-in</td>
+</tr>
+<tr>
+<td><strong>Remediation: agent runner v2 (allowlist, BMOS
+approvals)</strong></td>
+<td>✅ Implemented</td>
+</tr>
+<tr>
+<td><strong>Stage B: X-Tenant-ID fully removed</strong></td>
+<td>✅ Verified</td>
+</tr>
+<tr>
+<td>Outbox + worker (17/17)</td>
+<td>✅ Implemented, integration tested</td>
+</tr>
+<tr>
+<td>Qdrant vector search (11/11)</td>
+<td>✅ Implemented, integration tested</td>
+</tr>
+<tr>
+<td>Garage S3 objects (12/12)</td>
+<td>✅ Implemented, integration tested</td>
+</tr>
+<tr>
+<td>AI chat via provider abstraction (6/6)</td>
+<td>✅ Implemented, integration tested</td>
+</tr>
+<tr>
+<td>n8n workflows (4/4)</td>
+<td>✅ Implemented, integration tested</td>
+</tr>
+<tr>
+<td>Agent sandbox (7/7)</td>
+<td>✅ Implemented, integration tested</td>
+</tr>
+<tr>
+<td>Dark web UI (dashboard, tasks, AI chat, docs, files, workflows,
+tenants, health)</td>
+<td>✅ Implemented</td>
+</tr>
+<tr>
+<td>Projects, Evidence/Approvals, audit UI</td>
+<td>⏳ Planned (Stage D)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="remediation-agent-01-through-qa-01">Remediation (AGENT-01
+through QA-01)</h3>
+<table>
+<colgroup>
+<col style="width: 60%" />
+<col style="width: 40%" />
+</colgroup>
+<thead>
+<tr>
+<th>Workstream</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AGENT-01: agent runner actually runs (not sleep)</td>
+<td>✅ Implemented</td>
+</tr>
+<tr>
+<td>AGENT-02: allowlist execution, no shell blacklist</td>
+<td>✅ Implemented</td>
+</tr>
+<tr>
+<td>GOV-01: BMOS-owned human approvals (migration 010)</td>
+<td>✅ Implemented</td>
+</tr>
+<tr>
+<td>WORKER-01: process-kill crash test</td>
+<td>✅ Implemented (<code>test-worker-crash.sh</code>)</td>
+</tr>
+<tr>
+<td>TLS-01: transport verification (HTTP-only / opt-in HTTPS)</td>
+<td>✅ Implemented</td>
+</tr>
+<tr>
+<td>DOC-01: README reconciled, stale claims removed</td>
+<td>✅ Implemented</td>
+</tr>
+<tr>
+<td>QA-01: canonical <code>scripts/verify.sh</code></td>
+<td>✅ Implemented</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Agent runner v2:</strong>
+<code>app/agent/agent-runner.php</code> — no <code>shell</code> action,
+no regex blacklist. Allowlisted operations only
+(<code>task.fetch</code>, <code>job.enqueue</code>,
+<code>api.call</code>, <code>file.write</code>, <code>file.read</code>,
+<code>http.fetch</code>). Consequential actions require a BMOS approval
+record (<code>POST /approvals/request</code>, human decides via
+<code>POST /approvals/{id}/decide</code>). The agent can never
+self-approve.</p>
+<p><strong>Verify everything:</strong>
+<code>bash scripts/verify.sh</code></p>
+<p><strong>Authentication:</strong> real sessions (bcrypt + httponly
+cookies) and per-tenant Bearer API keys. Tenant identity comes from
+verified membership — the old <code>X-Tenant-ID</code> demo header is
+gone.</p>
+<h2 id="stack">Stack</h2>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Image</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Traefik</td>
+<td><code>traefik:v3</code></td>
+<td>Edge router (:80)</td>
+</tr>
+<tr>
+<td>Nginx</td>
+<td><code>nginx:1.28-alpine</code></td>
+<td>PHP-FPM reverse proxy</td>
+</tr>
+<tr>
+<td>PHP</td>
+<td><code>php:8.4-fpm-alpine</code></td>
+<td>API + web UI (server-rendered)</td>
+</tr>
+<tr>
+<td>Worker</td>
+<td>(same PHP image)</td>
+<td>Outbox job runner</td>
+</tr>
+<tr>
+<td>Postgres</td>
+<td><code>postgres:17-alpine</code></td>
+<td>Authoritative store, forced RLS</td>
+</tr>
+<tr>
+<td>Qdrant</td>
+<td><code>qdrant/qdrant:v1.13.0</code></td>
+<td>Vector index (rebuildable)</td>
+</tr>
+<tr>
+<td>Garage</td>
+<td><code>dxflrs/garage:v2.4.1</code></td>
+<td>S3-compatible objects</td>
+</tr>
+<tr>
+<td>n8n</td>
+<td><code>n8nio/n8n:1.113.0</code></td>
+<td>Workflows (profile-gated)</td>
+</tr>
+<tr>
+<td>Redis</td>
+<td><code>redis:7-alpine</code></td>
+<td>n8n queue (profile-gated, optional)</td>
+</tr>
+</tbody>
+</table>
+<p>Lemonade Server runs on the <strong>Windows host</strong> (GPU), not
+in Docker. PHP reaches it via <code>LEMONADE_URL</code>.</p>
+<h2 id="quickstart">Quickstart</h2>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. Secrets (never commit these)</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> secrets <span class="kw">&amp;&amp;</span> <span class="fu">chmod</span> 700 secrets</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="ex">openssl</span> rand <span class="at">-base64</span> 24 <span class="kw">|</span> <span class="fu">tr</span> <span class="at">-d</span> <span class="st">&#39;\n&#39;</span> <span class="op">&gt;</span> secrets/postgres_password.txt</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="ex">openssl</span> rand <span class="at">-base64</span> 24 <span class="kw">|</span> <span class="fu">tr</span> <span class="at">-d</span> <span class="st">&#39;\n&#39;</span> <span class="op">&gt;</span> secrets/app_password.txt</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="ex">openssl</span> rand <span class="at">-base64</span> 24 <span class="kw">|</span> <span class="fu">tr</span> <span class="at">-d</span> <span class="st">&#39;\n&#39;</span> <span class="op">&gt;</span> secrets/migrator_password.txt</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="ex">openssl</span> rand <span class="at">-hex</span> 32 <span class="kw">|</span> <span class="fu">tr</span> <span class="at">-d</span> <span class="st">&#39;\n&#39;</span> <span class="op">&gt;</span> secrets/garage_rpc_secret.txt</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="ex">openssl</span> rand <span class="at">-base64</span> 24 <span class="kw">|</span> <span class="fu">tr</span> <span class="at">-d</span> <span class="st">&#39;\n&#39;</span> <span class="op">&gt;</span> secrets/garage_admin_token.txt</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="fu">touch</span> secrets/garage_app_key_id.txt secrets/garage_app_secret.txt</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="fu">chmod</span> 644 secrets/<span class="pp">*</span>.txt</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> .env.example .env</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a><span class="co"># 2. Start core stack</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/garage-config.sh</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> compose up <span class="at">-d</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/migrate.sh</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/garage-init.sh</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> compose restart php nginx</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a><span class="co"># 3. Create admin user</span></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/seed-admin.sh</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a><span class="co"># 4. Open http://bmos.localhost/login</span></span></code></pre></div>
+<p>Optional profiles:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/n8n-init.sh</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> compose <span class="at">--profile</span> n8n up <span class="at">-d</span>                  <span class="co"># n8n (regular mode)</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> compose <span class="at">--profile</span> n8n <span class="at">--profile</span> queue up <span class="at">-d</span>  <span class="co"># + Redis queue mode</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> compose <span class="at">--profile</span> agents up <span class="at">-d</span>               <span class="co"># agent sandbox</span></span></code></pre></div>
+<h2 id="test-suites">Test suites</h2>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-isolation.sh  <span class="co"># 9 passed — RLS tenant isolation</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-outbox.sh     <span class="co"># 17 passed — transactional outbox</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-qdrant.sh     <span class="co"># 11 passed — vector search, tenant-filtered</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-garage.sh     <span class="co"># 12 passed — S3 objects, presigned URLs</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-lemonade.sh   <span class="co"># 6 passed — local AI chat</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-ai-providers.sh <span class="co"># 25 passed — provider abstraction (offline)</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-crm.sh        <span class="co"># CRM 1.0 — leads/accounts/contacts/notes/activities + RLS</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-n8n.sh        <span class="co"># 4 passed — workflow integration</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-auth.sh       <span class="co"># 6 passed — session auth, API keys</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-agents.sh     <span class="co"># 7 passed — sandbox isolation</span></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-redis.sh      <span class="co"># queue mode (optional)</span></span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Stage B:</span></span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-cross-tenant.sh    <span class="co"># cross-tenant isolation via HTTP</span></span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-worker-recovery.sh <span class="co"># kill worker mid-job, verify reaper</span></span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-hardening.sh       <span class="co"># read-only FS, caps, no-new-privs</span></span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/test-tls.sh             <span class="co"># HTTPS, redirect, cert validity</span></span></code></pre></div>
+<h2 id="stage-b-security-reliability">Stage B — security &amp;
+reliability</h2>
+<p><strong>Auth hardening:</strong> - Session idle timeout (8 hours) -
+API keys: expiration (<code>expires_at</code>) and revocation
+(<code>revoked_at</code>) - Secure cookie flag auto-enabled over HTTPS -
+<code>X-Tenant-ID</code> demo header fully removed from code and
+tests</p>
+<p><strong>Worker reliability:</strong> - Leases: claimed jobs hold a
+60s lease, renewed via heartbeat - Reaper:
+<code>app.reap_expired_leases()</code> (SECURITY DEFINER) recovers dead
+workers’ jobs - Bounded retries (max 5) with exponential backoff →
+dead-letter - All handlers must be idempotent</p>
+<p><strong>Container hardening:</strong> - Read-only root filesystems
+(php, nginx, worker) with tmpfs for /tmp - <code>cap_drop: [ALL]</code>
+everywhere; minimal caps added back only where needed -
+<code>no-new-privileges</code> on all services - Docker socket: Traefik
+only (read-only, documented); all others have none -
+Postgres/Qdrant/Garage: backend network only, no published ports</p>
+<p><strong>TLS (opt-in):</strong> - Default is HTTP-only on :80. To
+enable HTTPS: see <code>docs/tls.md</code>. - When enabled: Traefik
+HTTPS on :443, HTTP→HTTPS redirect (301), TLS 1.2+ with strong cipher
+suites. - Local dev certs:
+<code>bash scripts/generate-dev-certs.sh</code> - Trust the CA: import
+<code>docker/traefik/certs/ca.crt</code> (Windows certmgr.msc) or copy
+to <code>/usr/local/share/ca-certificates/</code> (Linux).</p>
+<p><strong>Agent sandbox:</strong> - Real runner:
+<code>app/agent/agent-runner.php</code> (replaces sleep-infinity) -
+Disposable <code>/tmp</code> workspaces, wiped after each task - Scoped
+BMOS API keys (tenant-bound, expirable) - Destructive commands blocked
+without human approval file</p>
+<h2 id="web-ui">Web UI</h2>
+<p>Server-rendered PHP + Tailwind (CDN) + HTMX + Alpine.js, dark theme.
+Sidebar: Command Center / Operations / CRM / AI Workforce / Automation /
+Administration.</p>
+<ul>
+<li><code>/login</code> — sign in (bcrypt sessions)</li>
+<li><code>/dashboard</code> — stats, recent tasks, system status</li>
+<li><code>/tasks</code> — task management (HTMX)</li>
+<li><code>/crm</code> — CRM 1.0: leads, companies, contacts, notes,
+activities, search (see docs/crm.html)</li>
+<li><code>/ai-ui</code> — AI chat (configurable provider; see
+docs/ai-providers.html)</li>
+<li><code>/documents</code> — document search</li>
+<li><code>/objects-ui</code> — file upload/download (presigned
+URLs)</li>
+<li><code>/workflows</code> — n8n integration dashboard</li>
+<li><code>/tenants</code>, <code>/health-ui</code> — administration</li>
+</ul>
+<h2 id="auth-model-stage-a">Auth model (Stage A)</h2>
+<ul>
+<li><code>POST /auth/login</code> → bcrypt verify → PHP session
+(httponly cookie)</li>
+<li>Tenant comes from <strong>verified membership</strong>, never a
+client header</li>
+<li><code>Authorization: Bearer bmos_&lt;key&gt;</code> for
+server-to-server (n8n)</li>
+<li><code>app.users</code> RLS uses SECURITY DEFINER functions owned by
+<code>bmos_migrator</code> (login must bypass RLS before identity is
+known)</li>
+</ul>
+<h2 id="notes">Notes</h2>
+<ul>
+<li><strong>Two networks:</strong> <code>edge</code> (Traefik, Nginx)
+and <code>backend</code> (internal).</li>
+<li><strong>Postgres is not published</strong>; app connects via
+<code>postgres:5432</code>.</li>
+<li><strong>Secrets:</strong> file-based Compose secrets under
+<code>secrets/</code> (chmod 644 so www-data can read; the 700 directory
+blocks other host users). Out of Git.</li>
+<li><strong>Roles:</strong> <code>bmos_owner</code> (owns objects, no
+login), <code>bmos_migrator</code> (migrations), <code>bmos_app</code>
+(runtime, <code>NOBYPASSRLS</code>). RLS is
+<strong>forced</strong>.</li>
+<li><strong>Liveness vs readiness:</strong> <code>/health</code> never
+touches the DB; <code>/ready</code> connects as
+<code>bmos_app</code>.</li>
+<li><strong>Worker:</strong> handles SIGTERM gracefully. A crash mid-job
+leaves the row in <code>claimed</code> — no automatic reaper yet (Stage
+B). Handlers must be idempotent.</li>
+</ul>
+<h2 id="version-matrix">Version matrix</h2>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Image / version used</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Traefik</td>
+<td><code>traefik:v3</code></td>
+<td>Observed 3.7.17, 2026-11-01</td>
+</tr>
+<tr>
+<td>Nginx</td>
+<td><code>nginx:1.28-alpine</code></td>
+<td></td>
+</tr>
+<tr>
+<td>PHP</td>
+<td><code>php:8.4-fpm-alpine</code></td>
+<td><code>pdo_pgsql</code>, <code>pcntl</code> compiled in</td>
+</tr>
+<tr>
+<td>PostgreSQL</td>
+<td><code>postgres:17-alpine</code></td>
+<td></td>
+</tr>
+<tr>
+<td>Qdrant</td>
+<td><code>qdrant/qdrant:v1.13.0</code></td>
+<td>Derived vector index only</td>
+</tr>
+<tr>
+<td>Garage</td>
+<td><code>dxflrs/garage:v2.4.1</code></td>
+<td>S3-compatible, backend-only</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="phase-build-notes-historical">Phase build notes
+(historical)</h2>
+<details>
+<summary>
+Phase 5 — Outbox pattern
+</summary>
+<p><code>POST /jobs/enqueue</code> writes a business record
+(<code>app.tasks</code>) <strong>and</strong> the outbox job
+(<code>app.outbox_jobs</code>) in <strong>one</strong> transaction.
+Duplicate <code>idempotency_key</code> returns the original with
+<code>"deduplicated": true</code>.</p>
+The worker: peeks pending → sets tenant context → claims with
+<code>FOR UPDATE SKIP LOCKED</code> → works → records done/backoff/dead.
+</details>
+<details>
+<summary>
+Phase 6 — Qdrant as derived index
+</summary>
+PostgreSQL is authoritative; Qdrant holds vectors only. Every point
+carries <code>tenant_id</code>, so the collection can be wiped and
+rebuilt from PG at any time. Embeddings are demo placeholders
+(<code>DemoEmbeddings</code>); swap in a real model via
+<code>QDRANT_VECTOR_SIZE</code>.
+</details>
+<details>
+<summary>
+Phase 7 — Garage S3 objects
+</summary>
+PG holds metadata; Garage holds bytes. Clients use presigned URLs minted
+by PHP after BMOS authorization. Garage S3 API is backend-only, no
+published ports.
+</details>
+<details>
+<summary>
+Phase 8 — Lemonade (Windows host)
+</summary>
+Stays on the Windows host (GPU), not a container. PHP reaches it via
+<code>LEMONADE_URL</code>. No DB credentials to Lemonade; pure
+inference. Qwen3.5 requests set
+<code>chat_template_kwargs.enable_thinking=false</code>.
+</details>
+<details>
+<summary>
+Phase 17 — AI provider abstraction
+</summary>
+<code>AI_PROVIDER</code> selects the inference backend:
+<code>lemonade</code> (default, local), <code>mistral</code>,
+<code>deepseek</code>, <code>openai</code>, <code>groq</code>,
+<code>ollama</code>, or <code>custom</code> (any OpenAI-compatible
+endpoint). API keys via env or <code>&lt;NAME&gt;_FILE</code> Docker
+secret. <code>/ai/health</code> exposes provider/model/endpoint, never
+keys. Full guide: <code>docs/ai-providers.md</code>. Tests:
+<code>scripts/test-ai-providers.sh</code>.
+</details>
+<details>
+<summary>
+Phase 9/10 — n8n (+ Redis queue)
+</summary>
+Profile-gated. n8n calls BMOS APIs only — never bypasses auth, never
+gets DB credentials. Regular mode first; Queue Mode is opt-in via
+<code>.env</code>.
+</details>
+<details>
+<summary>
+Phase 11 — Agent sandbox (last)
+</summary>
+No Docker socket, no DB credentials, no secrets. Backend network only —
+calls BMOS APIs via <code>http://nginx</code> with auth enforced.
+</details>
+
+  </main>
+</div>
+</body>
+</html>

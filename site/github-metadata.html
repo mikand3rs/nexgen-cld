@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHub repo metadata — NexGen CLD docs</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#08080c; color:#e8e8ee; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; margin:0; }
+  .wrap { display:flex; min-height:100vh; }
+  nav { width:264px; flex-shrink:0; border-right:1px solid #1c1c26; padding:24px 16px; position:sticky; top:0; height:100vh; overflow:auto; box-sizing:border-box; }
+  nav h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#8b8b9e; margin:0 0 12px 8px; }
+  nav a { display:block; padding:8px 12px; border-radius:8px; color:#c9c9d8; text-decoration:none; font-size:14px; }
+  nav a:hover { background:#14141c; color:#fff; }
+  main { flex:1; max-width:860px; padding:40px 48px; }
+  h1,h2,h3 { color:#fff; }
+  a { color:#67e8f9; }
+  code { background:#14141c; padding:2px 6px; border-radius:6px; font-size:.9em; }
+  pre { background:#101016; border:1px solid #1c1c26; border-radius:12px; padding:16px; overflow:auto; }
+  pre code { background:none; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:16px 0; }
+  th,td { border:1px solid #262633; padding:8px 12px; text-align:left; font-size:14px; }
+  th { background:#101016; }
+  img { max-width:100%; border-radius:12px; }
+  blockquote { border-left:3px solid #67e8f9; margin:16px 0; padding:4px 16px; color:#b9b9cc; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <h2>NexGen CLD docs</h2>
+        <a href="index.html">Overview</a>
+        <a href="ai-providers.html">BMOS 3.2 — AI Providers (Phase 17)</a>
+        <a href="crm.html">BMOS CRM 1.0 — native customer &amp; sales module</a>
+        <a href="github-metadata.html">GitHub repo metadata</a>
+        <a href="portal.html">Docs portal</a>
+        <a href="preline-ui-analysis.html">Board guidelines — UI web access for BMOS (Preline template analysis)</a>
+        <a href="secrets.html">Secrets</a>
+        <a href="tls.html">TLS / HTTPS (Stage B, opt-in)</a>
+  </nav>
+  <main>
+<h1 id="github-repo-metadata">GitHub repo metadata</h1>
+<p>Set once in the GitHub web UI. On the repo’s main page, click the
+gear icon next to <strong>About</strong> (top right) and fill in:</p>
+<ul>
+<li><strong>Description:</strong>
+<code>NexGen CLD v4 (BMOS 3.2) — self-hosted, multi-tenant business operating system. PHP 8.4 + PostgreSQL 17 (forced RLS) + Qdrant + Garage S3 + n8n + local/cloud AI.</code></li>
+<li><strong>Website:</strong>
+<code>https://www.nexgencld.com</code></li>
+<li><strong>Topics:</strong> <code>php</code> <code>postgresql</code>
+<code>multi-tenant</code> <code>self-hosted</code> <code>docker</code>
+<code>crm</code> <code>rag</code> <code>row-level-security</code></li>
+<li>Check <strong>“Include in the home page”</strong> if offered.</li>
+</ul>
+<p>Then create the release: <strong>Releases → Draft a new release
+→</strong></p>
+<ul>
+<li><strong>Tag:</strong> <code>v4.0.0</code> (create on publish,
+targeting <code>main</code>)</li>
+<li><strong>Release title:</strong>
+<code>v4.0.0 — BMOS 3.2 + CRM 1.0</code></li>
+<li><strong>Description:</strong> paste the contents of
+<code>RELEASE-NOTES-v4.0.0.md</code></li>
+</ul>
+
+  </main>
+</div>
+</body>
+</html>
