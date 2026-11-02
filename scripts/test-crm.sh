@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 BASE="${BMOS_BASE:-http://bmos.localhost}"
 EMAIL="${ADMIN_EMAIL:?set ADMIN_EMAIL}"
 PASS="${ADMIN_PASSWORD:?set ADMIN_PASSWORD}"
-TAG="zz-crm-test"
+TAG="zz-crm-test-$(date +%s)"  # unique per run: a crashed run can never pollute the next
 
 set -a
 [ -f .env ] && . ./.env
@@ -174,14 +174,17 @@ for t in crm_leads crm_accounts crm_contacts crm_account_contacts crm_pipelines 
 done
 
 # 15. Tenant B cannot see tenant A's lead (record-ID substitution blocked by RLS)
-LEAD_A=$(app "$CTX_A INSERT INTO app.crm_leads(tenant_id, name) VALUES ('$TENANT_A', '$TAG iso') RETURNING id;")
+app "$CTX_A INSERT INTO app.crm_leads(tenant_id, name) VALUES ('$TENANT_A', '$TAG iso');" > /dev/null
+LEAD_A=$(app "$CTX_A SELECT id FROM app.crm_leads WHERE tenant_id='$TENANT_A' AND name='$TAG iso' ORDER BY created_at DESC LIMIT 1;")
 SEEN_B=$(app "$CTX_B SELECT COUNT(*) FROM app.crm_leads WHERE id='$LEAD_A';")
 check "tenant B cannot SELECT tenant A lead" "0" "$SEEN_B"
 
 # 16. Cross-tenant FK: tenant B cannot link its contact to tenant A's account
-ACC_A=$(app "$CTX_A INSERT INTO app.crm_accounts(tenant_id, name) VALUES ('$TENANT_A', '$TAG iso acct') RETURNING id;")
-CON_B=$(app "$CTX_B INSERT INTO app.crm_contacts(tenant_id, first_name) VALUES ('$TENANT_B', '$TAG') RETURNING id;")
-FK16=$(app "$CTX_B INSERT INTO app.crm_account_contacts(tenant_id, account_id, contact_id) VALUES ('$TENANT_B', '$ACC_A', '$CON_B');" 2>&1 | tail -n 1 || true)
+app "$CTX_A INSERT INTO app.crm_accounts(tenant_id, name) VALUES ('$TENANT_A', '$TAG iso acct');" > /dev/null
+ACC_A=$(app "$CTX_A SELECT id FROM app.crm_accounts WHERE tenant_id='$TENANT_A' AND name='$TAG iso acct' ORDER BY created_at DESC LIMIT 1;")
+app "$CTX_B INSERT INTO app.crm_contacts(tenant_id, first_name) VALUES ('$TENANT_B', '$TAG');" > /dev/null
+CON_B=$(app "$CTX_B SELECT id FROM app.crm_contacts WHERE tenant_id='$TENANT_B' AND first_name='$TAG' ORDER BY created_at DESC LIMIT 1;")
+FK16=$(app "$CTX_B INSERT INTO app.crm_account_contacts(tenant_id, account_id, contact_id) VALUES ('$TENANT_B', '$ACC_A', '$CON_B');" 2>&1 || true)
 if echo "$FK16" | grep -qi "violates foreign key"; then
   echo "PASS: cross-tenant account link rejected by FK"; pass=$((pass+1))
 else
@@ -191,7 +194,7 @@ else
 fi
 
 # 17. Tenant B cannot write into tenant A's tables (WITH CHECK)
-W17=$(app "$CTX_B INSERT INTO app.crm_leads(tenant_id, name) VALUES ('$TENANT_A', '$TAG sneak');" 2>&1 | tail -n 1 || true)
+W17=$(app "$CTX_B INSERT INTO app.crm_leads(tenant_id, name) VALUES ('$TENANT_A', '$TAG sneak');" 2>&1 || true)
 if echo "$W17" | grep -qi "violates row-level security\|new row violates"; then
   echo "PASS: cross-tenant INSERT rejected by RLS WITH CHECK"; pass=$((pass+1))
 else
